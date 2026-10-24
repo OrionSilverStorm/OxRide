@@ -2,8 +2,10 @@
 
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Literal
 
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -51,14 +53,29 @@ class SpeakRequest(BaseModel):
     text: str
 
 
-def get_ctx(depart_at):
+def parse_depart_at(depart_at):
+    # The request sends text (or nothing). get_context needs a real datetime.
+    # Nothing, "", or "null" means leaving now. A time without a timezone is Oxford time.
+    if not depart_at or depart_at == "null":
+        return datetime.now(timezone.utc)
     try:
-        return time_model.get_context(depart_at)
-    except NotImplementedError:
-        # time_model isn't written yet, so pretend it's a dry daytime ride.
-        # Delete this fallback once get_context works.
-        return {"hour": 12, "is_dark": False, "wind_speed": 0, "wind_dir": 0,
-                "rain": 0, "temperature_c": 12}
+        when = datetime.fromisoformat(depart_at)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"depart_at is not a date/time: {depart_at!r}")
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=time_model.London)
+    return when
+
+
+def get_ctx(depart_at):
+    when = parse_depart_at(depart_at)
+    try:
+        return time_model.get_context(when)
+    except requests.RequestException as e:
+        # Open-Meteo is down or slow: route anyway, as a dry ride with no wind.
+        print(f"WARNING: weather fetch failed ({e}), using a default context")
+        return {"wind_ms": 0, "wind_from_deg": 0, "rain_prob": 0, "rain_mm": 0,
+                "dark": False, "rush": False, "local": when.isoformat()}
 
 
 @app.get("/health")

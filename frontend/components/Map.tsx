@@ -6,6 +6,8 @@ import {
   MapContainer,
   TileLayer,
   Marker,
+  Polyline,
+  ZoomControl,
   useMap,
   useMapEvents,
 } from "react-leaflet";
@@ -82,6 +84,7 @@ export default function Map() {
   //start and end location
   let [userPos, setUserPos] = useState<L.LatLng | null>(null); // User's position, null until found
   let [targetPos, setTargetPos] = useState<L.LatLng | null>(null); // Target position, null until the user clicks
+  let [route, setRoute] = useState<[number, number][] | null>(null); // Route as [lat, lon] points, null until a ride is planned
   //////////////////////////////////////////////////////////////////////////
 
   // In Map: send start/end, get the route back
@@ -92,14 +95,16 @@ export default function Map() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        start: { lat: userPos.lat, lon: userPos.lng }, // Match RouteRequest.start shape
-        end: { lat: targetPos.lat, lon: targetPos.lng }, // Match RouteRequest.end shape
-        profile: "regular", // Must be a value your backend accepts
-        depart_at: "null", // Only if the model requires it
+        start: [userPos.lat, userPos.lng], // [lat, lon], latitude first
+        end: [targetPos.lat, targetPos.lng], // [lat, lon], latitude first
+        profile: "regular", // "fast" | "regular" | "chill"
+        // depart_at left out = leaving now
       }),
     });
-    if (!res.ok) return console.warn(res.status, (await res.json()).detail); // 404/422/503 reasons
-    console.log(await res.json()); // The route
+    if (!res.ok) return console.warn(res.status, await res.text()); // 404/422/503 reasons (text, so a down backend doesn't crash JSON parsing)
+    const data = await res.json(); // { route, elevations_m, stats, steps }
+    console.log(data);
+    setRoute(data.route); // Draws the line below
   };
 
   return (
@@ -111,13 +116,16 @@ export default function Map() {
         maxBounds={OXFORD_BOUNDS}
         maxBoundsViscosity={1.0}
         className="h-full w-full"
+        zoomControl={false} // turn off the default top-left +/- buttons...
       >
+        <ZoomControl position="bottomright" /> {/* ...and put them bottom-right instead */}
         <TileLayer
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution="&copy; OpenStreetMap contributors"
         />
         <UserMarker pos={userPos} setPos={setUserPos} />
         <TargetPin target={targetPos} setTarget={setTargetPos} />
+        {route && <Polyline positions={route} pathOptions={{ color: "#2563eb", weight: 5, opacity: 0.8 }} />} {/* The planned route */}
       </MapContainer>
       {/* Button inside the wrapper div, outside <MapContainer> */}
       {/*z-[1000] sits above Leaflet's panes */}
