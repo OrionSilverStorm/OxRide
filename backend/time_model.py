@@ -103,6 +103,15 @@ def time_penalty(edge, ctx):
     highway = first(edge.get("highway"))
     surface = first(edge.get("surface"))
     bearing = first(edge.get("bearing"))
+    lit = first(edge.get("lit"))
+
+    #darkness penalty
+    if ctx["dark"]:
+        if lit =="no":
+            p*=1.6
+        elif lit not in ("yes", "no"):
+            p*= 1.2
+
 
     #Rush hour penalty
     main_roads = {
@@ -185,7 +194,6 @@ def speed_ms(grade, head, profile):
     speed = (low + high) / 2
 
     return min(speed, MAX_SPEED) * SPEED_SCALE
-
 
 
 
