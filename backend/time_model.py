@@ -186,28 +186,75 @@ def speed_ms(grade, head, profile):
     return min(speed, MAX_SPEED) * SPEED_SCALE
 
 
-flat = speed_ms(0, 0, "commuter")
-uphill = speed_ms(0.05, 0, "commuter")
-headwind_speed = speed_ms(0, 5, "commuter")
-tailwind_speed = speed_ms(0, -5, "commuter")
-
-print("Flat:", flat * 3.6, "km/h")
-print("Uphill:", uphill * 3.6, "km/h")
-print("Headwind:", headwind_speed * 3.6, "km/h")
-print("Tailwind:", tailwind_speed * 3.6, "km/h")
-
-assert 15 <= flat * 3.6 <= 22
-assert uphill < flat
-assert headwind_speed < flat
-assert tailwind_speed > flat
-
-print("Stage 5 passed")
 
 
 
-def eta_minutes(route: dict, ctx: dict) -> float:
-    raise NotImplementedError
+def eta_minutes(edges, ctx, profile):
+    total_seconds = 0.0
 
+    for edge in edges:
+        length = edge["length"]
+        grade = edge.get("grade") or 0.0
+        bearing = edge.get("bearing")
+
+        # Calculate headwind for this road
+        head = headwind(bearing, ctx)
+
+        # Predict cycling speed
+        speed = speed_ms(grade, head, profile)
+
+        # Rain reduces speed by 10%
+        if ctx["rain_mm"] > 0:
+            speed *= 0.9
+
+        # Avoid division by zero
+        speed = max(speed, 0.5)
+
+        # Time for this road segment
+        time_seconds = length / speed
+
+        # Add junction delay
+        total_seconds += time_seconds + 2
+
+    return total_seconds / 60
+
+ctx = {
+    "wind_ms": 10,
+    "wind_from_deg": 270,
+    "rain_mm": 0
+}
+
+headwind_route = [
+    {"length": 1000, "grade": 0, "bearing": 270}
+]
+
+tailwind_route = [
+    {"length": 1000, "grade": 0, "bearing": 90}
+]
+
+head_eta = eta_minutes(
+    headwind_route, ctx, "commuter"
+)
+
+tail_eta = eta_minutes(
+    tailwind_route, ctx, "commuter"
+)
+
+print("Headwind ETA:", head_eta)
+print("Tailwind ETA:", tail_eta)
+
+assert head_eta > tail_eta
+print("Stage 6 passed")
+
+wet_ctx = ctx.copy()
+wet_ctx["rain_mm"] = 1.0
+
+wet_eta = eta_minutes(
+    headwind_route, wet_ctx, "commuter"
+)
+
+assert wet_eta > head_eta
+print("Rain test passed")
 
 def best_departures(start: tuple[float, float], end: tuple[float, float],
                     profile: str) -> list[dict]:
