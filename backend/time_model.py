@@ -6,7 +6,7 @@ import requests
 
 London = ZoneInfo("Europe/London")
 Oxford = (51.7520, -1.2577)
-hourly_vars = "wind_speed_10m,wind_direction_10m,precipitation_probability,precipitation,is_day"
+hourly_vars = "wind_speed_10m,wind_direction_10m,precipitation_probability,precipitation"
 wind_at_rider = 0.5
 
 
@@ -125,21 +125,85 @@ def time_penalty(edge, ctx):
 
     return p
 
+MASS = 85.0       # Rider + bicycle mass (kg)
+G = 9.81          # Gravitational acceleration
+RHO = 1.225       # Air density
+MAX_SPEED = 30 / 3.6
+SPEED_SCALE = 1.0
 
-ctx = {
-    "wind_ms": 10,
-    "wind_from_deg": 270,
-    "rain_mm": 1.0,
-    "rush": True
+PROFILES = {
+    "road": {
+        "power": 160,
+        "cda": 0.32,
+        "crr": 0.005
+    },
+    "commuter": {
+        "power": 80,
+        "cda": 0.50,
+        "crr": 0.007
+    },
+    "chill": {
+        "power": 55,
+        "cda": 0.55,
+        "crr": 0.008
+    }
 }
 
-edge = {
-    "highway": "primary",
-    "surface": "gravel",
-    "bearing": 270
-}
+def power_needed(v, grade, head, pr):
+    theta = math.atan(grade or 0.0)
 
-print(time_penalty(edge, ctx))
+    gravity = MASS * G * math.sin(theta)
+
+    rolling = MASS * G * pr["crr"] * math.cos(theta)
+
+    air = (
+        0.5 * RHO * pr["cda"]
+        * max(v + head, 0) ** 2
+    )
+
+    return (gravity + rolling + air) * v
+
+def speed_ms(grade, head, profile):
+    pr = PROFILES[profile]
+
+    low = 0.5
+    high = 25.0
+
+    for _ in range(40):
+        mid = (low + high) / 2
+
+        required = power_needed(
+            mid, grade, head, pr
+        )
+
+        if required > pr["power"]:
+            high = mid
+        else:
+            low = mid
+
+    speed = (low + high) / 2
+
+    return min(speed, MAX_SPEED) * SPEED_SCALE
+
+
+flat = speed_ms(0, 0, "commuter")
+uphill = speed_ms(0.05, 0, "commuter")
+headwind_speed = speed_ms(0, 5, "commuter")
+tailwind_speed = speed_ms(0, -5, "commuter")
+
+print("Flat:", flat * 3.6, "km/h")
+print("Uphill:", uphill * 3.6, "km/h")
+print("Headwind:", headwind_speed * 3.6, "km/h")
+print("Tailwind:", tailwind_speed * 3.6, "km/h")
+
+assert 15 <= flat * 3.6 <= 22
+assert uphill < flat
+assert headwind_speed < flat
+assert tailwind_speed > flat
+
+print("Stage 5 passed")
+
+
 
 def eta_minutes(route: dict, ctx: dict) -> float:
     raise NotImplementedError
