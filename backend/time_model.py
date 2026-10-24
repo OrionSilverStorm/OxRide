@@ -89,23 +89,57 @@ def headwind(bearing, ctx):
     angle = math.radians(bearing - wind_direction)
     return wind_speed * math.cos(angle)
 
-ctx ={
+
+
+
+def time_penalty(edge, ctx):
+    p = 1.0
+
+    def first(v):
+        if isinstance(v, list):
+            return v[0] if v else None
+        return v
+
+    highway = first(edge.get("highway"))
+    surface = first(edge.get("surface"))
+    bearing = first(edge.get("bearing"))
+
+    #Rush hour penalty
+    main_roads = {
+        "trunk", "primary", "secondary",
+        "trunk_link", "primary_link", "secondary_link"
+    }
+
+    if ctx["rush"] and highway in main_roads:
+        p *= 1.5
+
+    #surface penalty in rain
+    if ctx["rain_mm"] > 0 and surface == "gravel":
+        p *= 1.4
+
+    #Headwind penalty
+    hw = headwind(bearing, ctx)
+
+    if hw > 0:
+        p *= 1 + 0.03 * hw
+
+    return p
+
+
+ctx = {
     "wind_ms": 10,
-    "wind_from_deg": 270
+    "wind_from_deg": 270,
+    "rain_mm": 1.0,
+    "rush": True
 }
-print("Headwind:", headwind(270,ctx))
-print("Tailwind:", headwind(90, ctx))
-print("Crosswind:", headwind(0, ctx))
-print("Missing bearing:",headwind(None, ctx))
 
-def time_penalty(edge_data: dict, ctx: dict) -> float:
-    """1.0 = normal, 2.0 = twice as bad.
+edge = {
+    "highway": "primary",
+    "surface": "gravel",
+    "bearing": 270
+}
 
-    Unlit after dark, main roads at rush hour, headwind, and cycling-restricted
-    streets (Cornmarket, Queen Street) during restricted hours cost more.
-    """
-    return 1.0
-
+print(time_penalty(edge, ctx))
 
 def eta_minutes(route: dict, ctx: dict) -> float:
     raise NotImplementedError
