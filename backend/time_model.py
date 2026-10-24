@@ -1,7 +1,45 @@
 """ETA prediction, time of day, wind and rain."""
+import math, json, os
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+import requests
 
-from datetime import datetime
+London = ZoneInfo("Europe/London")
+Oxford = (51.7520, -1.2577)
+hourly_vars = "wind_speed_10m,wind_direction_10m,precipitation_probability,precipitation,is_day"
 
+
+def fetch_weather():
+    r = requests.get(
+        "https://api.open-meteo.com/v1/forecast",
+        params={
+            "latitude": Oxford[0],
+            "longitude": Oxford[1],
+            "hourly": hourly_vars,
+            "wind_speed_unit": "ms",
+            "forecast_days": 3,
+        },
+        timeout=8,
+    )
+    
+    r.raise_for_status()
+    data = r.json()
+    return data["hourly"]
+
+def parse_times(hourly):
+    return[
+        datetime.fromisoformat(t).replace(tzinfo=timezone.utc)
+        for t in hourly["time"]
+    ]
+
+if __name__ == "__main__":
+    hourly = fetch_weather()
+    times = parse_times(hourly)
+
+    print("Hours:", len(times))
+    print("Times:", times[:3])
+    print("Wind:", hourly["wind_speed_10m"][:3])
+    print("Timezone:", times[0].tzinfo)
 
 def get_context(depart_at: datetime) -> dict:
     """hour, is_dark, wind_speed, wind_dir, rain, temperature_c."""
