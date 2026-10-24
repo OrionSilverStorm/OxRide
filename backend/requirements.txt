@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+osmnx
+networkx
+numpy
+httpx
+google-genai
+elevenlabs
+psycopg[binary]

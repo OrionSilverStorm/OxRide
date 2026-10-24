@@ -1,23 +1,29 @@
-"""A* routing, edge cost function and ride profiles."""
+"""A*, cost function and ride profiles."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
 class RideProfile:
     name: str
-    lit_weight: float = 0.0
-    traffic_weight: float = 0.0
+    road_type_factors: dict[str, float] = field(default_factory=dict)
+    surface_factors: dict[str, float] = field(default_factory=dict)
     hill_weight: float = 0.0
 
 
-PROFILES: dict[str, RideProfile] = {}
+PROFILES: dict[str, RideProfile] = {
+    "road": RideProfile("road"),
+    "commuter": RideProfile("commuter"),
+    "chill": RideProfile("chill"),
+}
 
 
-def edge_cost(edge: dict, profile: RideProfile, conditions: dict) -> float:
+def edge_cost(edge_data: dict, profile: RideProfile, ctx: dict) -> float:
+    """length * road-type factor * surface factor + hill penalty, times time_penalty."""
     raise NotImplementedError
 
 
-def find_route(graph, origin: tuple[float, float], dest: tuple[float, float],
-               profile: RideProfile, conditions: dict) -> list[int]:
+def find_route(start: tuple[float, float], end: tuple[float, float],
+               profile: str, ctx: dict) -> dict:
+    """Same fields as the /route output: route, stats, steps."""
     raise NotImplementedError

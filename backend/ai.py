@@ -1,11 +1,21 @@
-"""Gemini request parsing and ElevenLabs voice output."""
+"""Gemini parsing and explanations, ElevenLabs voice."""
 
 
 def parse_request(text: str) -> dict:
-    """Turn a natural-language request into origin, destination and ride preferences (Gemini)."""
+    """Sentence -> start, end, profile, departure time (Gemini)."""
+    raise NotImplementedError
+
+
+def explain_route(route: dict, ctx: dict) -> str:
+    """Short note on why this route was chosen (Gemini)."""
     raise NotImplementedError
 
 
 def speak(text: str) -> bytes:
-    """Synthesize speech audio for the given text (ElevenLabs)."""
+    """Text to speech audio (ElevenLabs)."""
+    raise NotImplementedError
+
+
+def search_place(q: str) -> list[dict]:
+    """Nominatim lookup; 1 request/s and a User-Agent are required."""
     raise NotImplementedError
