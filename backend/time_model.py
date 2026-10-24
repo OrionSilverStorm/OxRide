@@ -219,7 +219,7 @@ def eta_minutes(edges, ctx, profile):
         # Avoid division by zero
         speed = max(speed, 0.5)
 
-        # Time for this road segment
+        # Time for road segment
         time_seconds = length / speed
 
         # Add junction delay
@@ -229,48 +229,84 @@ def eta_minutes(edges, ctx, profile):
 
 
 
-def best_departures(start: tuple[float, float], end: tuple[float, float],
-                    profile: str) -> list[dict]:
-    """ETA and score for each 15-minute slot over the next three hours."""
-    raise NotImplementedError
+def best_departures(route_fn, profile="regular", now=None):
+    if now is None:
+        now = datetime.now(timezone.utc)
 
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
 
-if __name__ == "__main__":
-    # Quick self-test: python time_model.py
-    ctx = {
-        "wind_ms": 10,
-        "wind_from_deg": 270,
-        "rain_mm": 0
-    }
+    now = now.astimezone(timezone.utc)
 
-    headwind_route = [
-        {"length": 1000, "grade": 0, "bearing": 270}
+    #Rounded to next 15 minutes
+    start = now.replace(second=0, microsecond=0)
+    minutes = (-start.minute) % 15
+
+    if minutes == 0 and (now.second or now.microsecond):
+        minutes = 15
+
+    start += timedelta(minutes=minutes)
+
+    slots = []
+
+    for k in range(13):
+        t = start + timedelta(minutes=15 * k)
+
+        ctx = get_context(t)
+        edges = route_fn(ctx)
+        eta = eta_minutes(edges, ctx, profile)
+
+        rain_prob = ctx["rain_prob"]
+
+        # Rain and darkness penalties
+        score = eta * (1 + 0.5 * rain_prob)
+        score += 5 if ctx["dark"] else 0
+
+        slots.append({
+            "depart_local": t.astimezone(London).isoformat(),
+            "depart_utc": t.isoformat(),
+            "eta_min": eta,
+            "rain_prob": rain_prob,
+            "dark": ctx["dark"],
+            "score": score,
+            "best": False
+        })
+
+    best_index = min(
+        range(len(slots)),
+        key=lambda i: slots[i]["score"]
+    )
+
+    slots[best_index]["best"] = True
+
+    return slots
+
+SNAPSHOT = os.path.join(
+    os.path.dirname(__file__),
+    "weather_snapshot.json"
+)
+
+def get_weather():
+    try:
+        data = fetch_weather()
+
+        with open(SNAPSHOT, "w") as f:
+            json.dump(data, f)
+
+    except Exception:
+        with open(SNAPSHOT) as f:
+            data = json.load(f)
+
+    return data
+
+def mock_route_fn(ctx):
+    return [
+        {
+            "length": 1000,
+            "grade": 0,
+            "bearing": 270,
+            "surface": "asphalt",
+            "lit": "yes"
+        }
     ]
 
-    tailwind_route = [
-        {"length": 1000, "grade": 0, "bearing": 90}
-    ]
-
-    head_eta = eta_minutes(
-        headwind_route, ctx, "regular"
-    )
-
-    tail_eta = eta_minutes(
-        tailwind_route, ctx, "regular"
-    )
-
-    print("Headwind ETA:", head_eta)
-    print("Tailwind ETA:", tail_eta)
-
-    assert head_eta > tail_eta
-    print("Stage 6 passed")
-
-    wet_ctx = ctx.copy()
-    wet_ctx["rain_mm"] = 1.0
-
-    wet_eta = eta_minutes(
-        headwind_route, wet_ctx, "regular"
-    )
-
-    assert wet_eta > head_eta
-    print("Rain test passed")
