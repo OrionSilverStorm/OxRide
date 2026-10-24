@@ -146,17 +146,22 @@ export default function Map() {
 
   // Fetch suggestions as the user types, cancelling stale requests
   useEffect(() => {
+    // Too short to search: clear the list and stop (no request sent)
     if (query.length < 2) return setResults([]);
+    // Lets us cancel this request if the user types again before it finishes
     const ctrl = new AbortController();
     fetch(
-      `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=5&bbox=-1.37,51.69,-1.14,51.82`,
-      { signal: ctrl.signal },
+      `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}` + // Search text, escaped for the URL
+        `&limit=5` + // Max 5 suggestions
+        `&bbox=-1.37,51.69,-1.14,51.82`, // Oxford only: left,bottom,right,top (lon,lat)
+      { signal: ctrl.signal }, // Connects the request to the AbortController
     )
-      .then((r) => r.json())
-      .then((d) => setResults(d.features))
-      .catch(() => {});
-    return () => ctrl.abort();
-  }, [query]);
+      .then((r) => r.json()) // Parse the response body as JSON
+      .then((d) => setResults(d.features)) // Photon returns GeoJSON: store the list of features
+      .catch(() => {}); // Ignore errors, including the abort from the cleanup below
+    // Cleanup: runs before the next effect (next keystroke) or on unmount
+    return () => ctrl.abort(); // Cancel the in-flight request so stale results never overwrite newer ones
+  }, [query]); // Re-run every time the search text changes
 
   // Click a suggestion: drop the pin, fly there, close the list
   const pick = (h: Hit) => {
