@@ -1,13 +1,12 @@
-"""Gemini parsing and explanations, ElevenLabs voice."""
+"""Gemini voice commands, ElevenLabs voice, Nominatim place search."""
 
 
-def parse_request(text: str) -> dict:
-    """Sentence -> start, end, profile, departure time (Gemini)."""
-    raise NotImplementedError
+def interpret_voice(audio: bytes | None, text: str | None,
+                    position: tuple[float, float] | None, route: dict | None) -> dict:
+    """What the rider said -> {action, settings, reply} (Gemini).
 
-
-def explain_route(route: dict, ctx: dict) -> str:
-    """Short note on why this route was chosen (Gemini)."""
+    action is new_route | reroute | answer; reply is a sentence or two.
+    """
     raise NotImplementedError
 
 

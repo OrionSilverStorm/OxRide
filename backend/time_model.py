@@ -4,12 +4,16 @@ from datetime import datetime
 
 
 def get_context(depart_at: datetime) -> dict:
-    """hour, is_dark, wind_speed, wind_dir, rain."""
+    """hour, is_dark, wind_speed, wind_dir, rain, temperature_c."""
     raise NotImplementedError
 
 
 def time_penalty(edge_data: dict, ctx: dict) -> float:
-    """1.0 = normal, 2.0 = twice as bad."""
+    """1.0 = normal, 2.0 = twice as bad.
+
+    Unlit after dark, main roads at rush hour, headwind, and cycling-restricted
+    streets (Cornmarket, Queen Street) during restricted hours cost more.
+    """
     return 1.0
 
 

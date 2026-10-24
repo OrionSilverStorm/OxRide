@@ -31,6 +31,21 @@ export interface RouteRequest {
   depart_at?: string;
 }
 
+export type VoiceAction = "new_route" | "reroute" | "answer";
+
+export interface VoiceRequest {
+  audio_b64?: string;
+  text?: string;
+  position?: LatLon;
+  route?: RouteResult;
+}
+
+export interface VoiceResult {
+  action: VoiceAction;
+  settings: Partial<RouteRequest>;
+  reply: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, init);
   if (!res.ok) throw new Error(`API error ${res.status}`);
@@ -44,4 +59,18 @@ export const getRoute = (body: RouteRequest) =>
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+
+export const sendVoice = (body: VoiceRequest) =>
+  request<VoiceResult>("/voice", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+export const speak = (text: string) =>
+  request<{ audio: string | null }>("/speak", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
   });

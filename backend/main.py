@@ -15,8 +15,11 @@ class RouteRequest(BaseModel):
     depart_at: str | None = None
 
 
-class ParseRequest(BaseModel):
-    text: str
+class VoiceRequest(BaseModel):
+    audio_b64: str | None = None
+    text: str | None = None
+    position: LatLon | None = None
+    route: dict | None = None
 
 
 class SpeakRequest(BaseModel):
@@ -49,10 +52,9 @@ def search(q: str) -> list:
     return []
 
 
-@app.post("/parse")
-def parse(req: ParseRequest) -> dict:
-    return {"start": None, "end": None, "profile": "commuter",
-            "depart_at": None, "note": ""}
+@app.post("/voice")
+def voice(req: VoiceRequest) -> dict:
+    return {"action": "answer", "settings": {}, "reply": "Okay."}
 
 
 @app.post("/speak")
