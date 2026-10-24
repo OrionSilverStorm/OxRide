@@ -17,10 +17,8 @@ def set_graph(g):
     global GRAPH
     GRAPH = g
 
-
-# ---------------------------------------------------------------------------
 # Ride profiles
-# ---------------------------------------------------------------------------
+# 
 # A profile says how much each kind of rider likes each kind of road.
 # A factor multiplies a road's length: below 1 = looks shorter (A* likes it),
 # above 1 = looks longer (A* avoids it). The keys are OpenStreetMap "highway"
@@ -49,11 +47,7 @@ PROFILES = {
     },
 }
 
-
-# ---------------------------------------------------------------------------
 # Distance helper
-# ---------------------------------------------------------------------------
-
 def haversine_m(lat1, lon1, lat2, lon2):
     # Straight-line distance in metres between two lat/lon points.
     r = 6371000  # earth radius in metres
@@ -64,11 +58,7 @@ def haversine_m(lat1, lon1, lat2, lon2):
     a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
 
-
-# ---------------------------------------------------------------------------
 # Cost of one road
-# ---------------------------------------------------------------------------
-
 def edge_cost(edge, profile, ctx):
     # edge = the facts about one road (length, highway, surface, lit, grade, ...)
     length = edge["length"]  # metres
@@ -88,76 +78,89 @@ def edge_cost(edge, profile, ctx):
     return cost
 
 
-def cheapest_edge(G, u, v, profile, ctx):
+def cheapest_edge(G, from_node, to_node, profile, ctx):
     # Two nodes can be joined by more than one road (MultiDiGraph).
     # Return the cheapest one and its cost.
     best_edge = None
     best_cost = math.inf
-    for edge in G[u][v].values():
+    for edge in G[from_node][to_node].values():
         cost = edge_cost(edge, profile, ctx)
         if cost < best_cost:
             best_edge = edge
             best_cost = cost
     return best_edge, best_cost
 
-
-# ---------------------------------------------------------------------------
 # A*
-# ---------------------------------------------------------------------------
+def distance_guess(G, node, goal, min_factor):
+    # Our guess of the cost still to go from this node to the goal: the straight-line
+    # distance, scaled down by min_factor. Some roads cost LESS than their length
+    # (factor below 1), so an unscaled guess could be too big and make A* miss the
+    # best route.
+    node_lat = G.nodes[node]["y"]
+    node_lon = G.nodes[node]["x"]
+    goal_lat = G.nodes[goal]["y"]
+    goal_lon = G.nodes[goal]["x"]
+    return min_factor * haversine_m(node_lat, node_lon, goal_lat, goal_lon)
+
+
+def rebuild_path(came_from, goal):
+    # came_from says, for each node, which node we arrived from.
+    # Start at the goal, follow it back to the start, then flip the list round.
+    path = [goal]
+    while path[-1] in came_from:
+        path.append(came_from[path[-1]])
+    path.reverse()
+    return path
+
 
 def astar(G, start, goal, profile, ctx):
     # start and goal are node ids. Returns a list of node ids, or None if no route.
 
-    # The "guess" for the distance still to go is the straight-line distance to the goal.
-    # Some roads cost LESS than their length (factor below 1), so we shrink the guess by
-    # the smallest factor in the profile. A guess that is too big can make A* miss the
-    # best route.
+    # the smallest road factor in this profile (see distance_guess)
     min_factor = min(list(profile["road_type_factors"].values()) + [1.0])
-    goal_lat = G.nodes[goal]["y"]
-    goal_lon = G.nodes[goal]["x"]
 
-    def guess(node):
-        return min_factor * haversine_m(G.nodes[node]["y"], G.nodes[node]["x"],
-                                        goal_lat, goal_lon)
+    cost_to_reach = {start: 0.0}  # cheapest cost found so far to get to each node
+    came_from = {}                # node -> the node we arrived from
+    done = set()                  # nodes we have finished with
 
-    cost_so_far = {start: 0.0}   # cheapest known cost to reach each node
-    came_from = {}               # node -> the node we reached it from (to rebuild the path)
-    todo = [(guess(start), start)]  # priority queue of (score, node), lowest score first
-    finished = set()             # nodes we are completely done with
+    # The to-do list. Each entry is (score, node), where
+    #   score = cost to reach the node + guess of the cost still to go
+    # heapq always hands back the entry with the LOWEST score first.
+    to_do = [(distance_guess(G, start, goal, min_factor), start)]
 
-    while todo:
-        _, node = heapq.heappop(todo)  # most promising node
+    while to_do:
+        # 1. take the most promising node off the list
+        _, node = heapq.heappop(to_do)
 
-        if node in finished:
-            continue  # a stale duplicate entry, skip it
+        # 2. skip it if we already finished it (the same node can be in the list twice)
+        if node in done:
+            continue
+
+        # 3. if it is the goal, we are finished
         if node == goal:
-            # walk backwards from the goal to the start
-            path = [node]
-            while node in came_from:
-                node = came_from[node]
-                path.append(node)
-            path.reverse()
-            return path
-        finished.add(node)
+            return rebuild_path(came_from, goal)
+        done.add(node)
 
-        # look at every road leaving this node
-        for neighbour in G.successors(node):
-            if neighbour in finished:
+        # 4. otherwise look at every road leaving this node
+        for next_node in G.successors(node):
+            if next_node in done:
                 continue
-            _, cost = cheapest_edge(G, node, neighbour, profile, ctx)
-            new_cost = cost_so_far[node] + cost
-            # found a cheaper way to reach this neighbour?
-            if new_cost < cost_so_far.get(neighbour, math.inf):
-                cost_so_far[neighbour] = new_cost
-                came_from[neighbour] = node
-                heapq.heappush(todo, (new_cost + guess(neighbour), neighbour))
 
+            _, road_cost = cheapest_edge(G, node, next_node, profile, ctx)
+            cost_via_node = cost_to_reach[node] + road_cost
+
+            # 5. is this the cheapest way to next_node found so far? then remember it
+            if cost_via_node < cost_to_reach.get(next_node, math.inf):
+                cost_to_reach[next_node] = cost_via_node
+                came_from[next_node] = node
+                score = cost_via_node + distance_guess(G, next_node, goal, min_factor)
+                heapq.heappush(to_do, (score, next_node))
+
+    # the list ran out without reaching the goal
     return None
 
 
-# ---------------------------------------------------------------------------
 # What the rest of the app calls
-# ---------------------------------------------------------------------------
 
 def nearest_node(G, lat, lon):
     # Snap a tapped point to the closest junction. (Loops over every node; fine for a city.)
