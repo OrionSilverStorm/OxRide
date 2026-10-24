@@ -15,6 +15,10 @@ import {
 import L from "leaflet";
 import { getRoute } from "@/lib/api";
 
+//define ride types
+type Profile = "chill" | "regular" | "fast";
+const PROFILES: Profile[] = ["chill", "regular", "fast"];
+
 // Props for UserMarker: the parent's state value + its setter
 interface UserMarkerProps {
   pos: L.LatLng | null; // User's position, null until found
@@ -92,6 +96,7 @@ export default function Map() {
   let [userPos, setUserPos] = useState<L.LatLng | null>(null); // User's position, null until found
   let [targetPos, setTargetPos] = useState<L.LatLng | null>(null); // Target position, null until the user clicks
   let [route, setRoute] = useState<[number, number][] | null>(null); // Route as [lat, lon] points, null until a ride is planned
+  const [profile, setProfile] = useState<Profile>("regular"); //defaults to regular
   //////////////////////////////////////////////////////////////////////////
 
   // Moves the target and removes the stale route line
@@ -108,7 +113,7 @@ export default function Map() {
       data = await getRoute({
         start: [userPos.lat, userPos.lng], // [lat, lon], latitude first
         end: [targetPos.lat, targetPos.lng], // [lat, lon], latitude first
-        profile: "regular", // "fast" | "regular" | "chill"
+        profile: profile, // "fast" | "regular" | "chill"
         // depart_at left out = leaving now
       });
     } catch (e) {
@@ -235,6 +240,27 @@ export default function Map() {
             ))}
           </ul>
         )}
+        {/* // Inside the search bar wrapper div, after the results list (so it sits
+        under the input) */}
+        <div className="mt-1 flex gap-1">
+          {/* Row of buttons: small top margin, small gap between them */}
+          {PROFILES.map(
+            (
+              p, // Loop over ["chill", "regular", "fast"], one button each
+            ) => (
+              <button
+                key={p} // React needs a unique key per item in a list
+                onClick={() => setProfile(p)} // Clicking saves this ride type into state
+                className={`flex-1 rounded px-2 py-1 text-sm capitalize shadow ${
+                  // flex-1: equal widths; capitalize: "chill" shows as "Chill"
+                  profile === p ? "bg-blue-600 text-white" : "bg-white" // Active one is blue, the rest are white
+                }`}
+              >
+                {p} {/* Button label: the ride type name */}
+              </button>
+            ),
+          )}
+        </div>
       </div>
 
       {/* Button inside the wrapper div, outside <MapContainer> */}
