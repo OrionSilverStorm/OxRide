@@ -7,3 +7,4 @@ httpx
 google-genai
 elevenlabs
 psycopg[binary]
+python-dotenv
