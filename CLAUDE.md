@@ -2,10 +2,24 @@
 
 Time-aware, voice-first cycle navigation for Oxford, built for a hackathon (theme: TIME). Google Maps gives the shortest route for cars; OxRide gives the best route for a cyclist at the time they ride: it accounts for hills, wind and temperature, prefers cycle paths and quiet streets over main roads, and reroutes when you go off route. You can't type while cycling, so you talk to it: Gemini works out what you want and ElevenLabs speaks the answer and the directions. Web app / PWA, mobile first.
 
-## Demo priorities
+## Challenges we're entering
 
-Must have: our own A* finds a sensible route in Oxford, drawn on a deployed map, and the same trip gives a different route at night than by day (lit streets).
-If we fall behind, cut in this order: Tiger Data, ElevenLabs (browser voice still works), rerouting, departure chart. Never cut the route on the map and the day/night switch.
+- **Main prize (theme TIME), core:** the route changes with the time of day, and we recommend a departure time.
+- **HRT, core:** predict ETA from gradient, surface, wind and time of day, then recommend a route and a time to leave. The hand-written A* is what we show them.
+- **Gemini:** the hands-free brain; understands what the rider says and explains why it picked the route.
+- **ElevenLabs:** speaks Gemini's replies, the ride briefing and the turn-by-turn directions.
+- **Tiger Data:** stores hourly weather and predicted journey times; feeds the best-time-to-leave chart.
+- **Hackiest Hack:** suffer score for hills, with a dragon logo.
+- DEV Writing: blog post next week.
+
+## Goals
+
+- **Must have (this is the demo):** our own A* finds a sensible cycle route between two points in Oxford; the route is drawn on a live, deployed map; the same trip gives a different route at night than by day because of lit streets.
+- **Should have:** navigation mode (live location, spoken turn-by-turn, simulate ride); rerouting when off route; PWA on a phone; ETA prediction and best time to leave; rush hour and the three profiles; place search and "use my location"; push-to-talk with Gemini (new route, reroute, question) and ElevenLabs replies.
+- **Nice to have:** ElevenLabs voice with browser voice as fallback; Tiger Data storing weather and predictions; suffer score with a dragon that gets angrier the more you climb.
+- **Dream:** rerouting for blocked roads; wind and rain affecting the route itself.
+
+If we fall behind, cut from the bottom up (nice to have first, e.g. Tiger Data, then ElevenLabs since the browser voice still works). Never cut the route on the map and the day/night switch.
 
 ## Stack
 
@@ -37,6 +51,150 @@ frontend/
   lib/mock.ts      fake data until the backend is ready
   public/          manifest.json, app icons, dragon logo
 ```
+
+## What each file is for
+
+### Backend
+
+- **`build_graph.py`**: run once, offline. Turns the real world into the data A* searches. Downloads Oxford's bike network with osmnx, adds elevation per node (OpenTopoData), computes `grade` and `bearing` per edge, fills in missing `lit` and `surface` tags with defaults by road type, and saves the graph file. Never runs while the app is serving requests.
+  - Graph contract (everyone relies on these names): each **edge** has `length` (m), `highway`, `surface`, `lit` (bool), `name`, `bearing` (deg), `grade` (rise/length); each **node** has `x` (lon), `y` (lat), `elevation` (m).
+- **`routing.py`**: finds the best path. Loads the graph once at startup. Snaps start/end lat-lon to the nearest nodes, runs our own A* (`heapq`), and prices each edge with `edge_cost` (length x road-type factor x surface factor + hill penalty, x `time_penalty`). Returns the route as a list of `[lat, lon]` (this is what the map draws), plus stats, plus steps. Must-have: this file alone is the demo.
+- **`navigation.py`**: turns the path into instructions. Takes the list of node ids from A*, compares the direction of travel before and after each junction, and produces steps `{text, distance_m, lat, lon, maneuver}` with street names. Needed for spoken directions, the next-turn display and off-route handling, not for drawing the route. Should-have: build it after the route works.
+- **`time_model.py`**: everything that depends on *when* you ride. `get_context` fetches weather (Open-Meteo) and works out darkness and rush hour; `time_penalty` says how bad one road is right now; `eta_minutes` predicts ride time (slower on hills and into a headwind); `best_departures` scores every 15-minute slot for the next 3 hours. This is the TIME and HRT part.
+- **`ai.py`**: the outside-world helpers for voice and search. `interpret_voice` sends what the rider said (plus position and current route) to Gemini and gets back `{action, settings, reply}`; `speak` turns text into audio (ElevenLabs); `search_place` turns "Radcliffe Camera" into coordinates (Nominatim).
+- **`db.py`**: Tiger Data (Postgres). Stores hourly weather and predicted journey times so the best-time-to-leave chart has data. Called by `time_model.py`; nothing else touches the DB. Cut first if time runs short.
+- **`main.py`**: the doorway. FastAPI app that exposes the endpoints and calls the functions above. Contains no logic of its own: it parses the request, calls one or two functions, returns JSON. Currently returns fake JSON so the frontend can build against it.
+- **`requirements.txt`**: backend Python dependencies.
+
+### Frontend
+
+- **`app/page.tsx`**: planning screen. Map, tap to set start/end, profile picker, departure time, route stats, charts.
+- **`app/navigate/page.tsx`**: navigation screen. Live dot, next turn, simulate ride, push-to-talk.
+- **`components/Map.tsx`**: the react-leaflet map: route line, start/end markers, live position dot, tile attribution.
+- **`components/RoutePanel.tsx`**: distance, climb, ETA, share on cycleways, share on lit roads.
+- **`components/ElevationChart.tsx`**: elevation profile along the route.
+- **`components/DepartureChart.tsx`**: ETA/score per 15-minute slot from `/best-departure`.
+- **`components/SufferScore.tsx`**: hill suffer score and the dragon logo (Hackiest Hack).
+- **`components/VoiceButton.tsx`**: big push-to-talk button.
+- **`hooks/useLocation.ts`**: live GPS via `watchPosition`.
+- **`hooks/useNavigation.ts`**: tracks the next step and detects "more than ~30 m off route for a few seconds", then asks for a new route from the current position.
+- **`hooks/useSimulatedRide.ts`**: fake position moving along the route at bike speed, plus the "take a wrong turn" button, for indoor demos.
+- **`hooks/useVoice.ts`**: records the mic, sends it to `/voice`, plays the spoken reply (ElevenLabs, Web Speech as fallback).
+- **`lib/api.ts`**: the only place the frontend calls the backend. Typed functions mirror the endpoints.
+- **`lib/mock.ts`**: fake route data so the UI can be built before the backend works.
+- **`public/manifest.json`** (+ icons, dragon logo): makes it an installable PWA.
+
+## Pipeline: who calls whom
+
+Pseudo-calls in the order they happen. `file.py: function()` means that function in that file.
+
+### Data shapes passed around
+
+```
+RouteRequest  {start:[lat,lon], end:[lat,lon], profile:"road"|"commuter"|"chill", depart_at: ISO string | null}
+ctx           {hour, is_dark, wind_speed, wind_dir, rain, temperature_c}      # from time_model.get_context
+RouteResult   {route:[[lat,lon],...],          # drawn on the map
+               elevations_m:[...],             # one per route point, for ElevationChart + suffer score
+               stats:{distance_m, climb_m, eta_min, cycleway_share, lit_share},
+               steps:[Step]}
+Step          {text, distance_m, lat, lon, maneuver:"left"|"right"|"straight"|"arrive"}
+Slot          {depart_at, eta_min, score}                                      # one per 15-minute departure option
+VoiceResult   {action:"new_route"|"reroute"|"answer", settings:{...RouteRequest fields...}, reply}
+```
+
+### 0. One-off graph build (before anything else)
+
+1. `backend/build_graph.py: build_graph(place, out_path)`
+   - `osmnx.graph_from_place("Oxford, UK", network_type="bike")` downloads roads, cycleways, tags.
+   - Elevation for every node from OpenTopoData (100 points per request, ~1 request/s).
+   - Per edge: `grade = (elev_end - elev_start) / length`, plus `osmnx.bearing.add_edge_bearings`.
+   - Fill missing `lit` and `surface` with defaults by `highway` type.
+   - Save the graph file. Print how many edges had real vs defaulted `lit`/`surface`.
+
+### 1. Server startup
+
+1. `backend/main.py` starts (uvicorn).
+2. `backend/routing.py` loads the graph file into memory once (`G`). Never reloaded per request.
+
+### 2. Plan a ride (tap start and end, press go)
+
+1. `frontend/app/page.tsx` holds start, end, profile, departure time in state and calls `getRoute()`.
+2. `frontend/lib/api.ts: getRoute(body)` sends `POST /route` with a `RouteRequest`.
+3. `backend/main.py: route(req)`
+   1. `ctx = time_model.get_context(req.depart_at)`
+   2. `return routing.find_route(req.start, req.end, req.profile, ctx)`
+4. `backend/time_model.py: get_context(depart_at)`
+   - Reads the Open-Meteo hourly forecast (fetched once and cached ~30 min, not per call) and picks the row for `depart_at`.
+   - Sets `is_dark` from sunrise/sunset, and fills `hour`, `wind_speed`, `wind_dir`, `rain`, `temperature_c`.
+   - Calls `db.save_weather(rows)` when it refreshes the forecast (skip if Tiger Data is cut).
+5. `backend/routing.py: find_route(start, end, profile, ctx)`
+   1. Snap `start` and `end` to node ids: `osmnx.distance.nearest_nodes(G, lon, lat)`.
+   2. `path = astar(G, s, e, cost_fn)`; the cost for each edge is `edge_cost(edge_data, PROFILES[profile], ctx)`.
+   3. `edge_cost`: `length x road_type_factor x surface_factor + hill_penalty(grade)`, then `x time_model.time_penalty(edge_data, ctx)`.
+   4. `time_model.py: time_penalty(edge_data, ctx)`: higher for unlit roads when `is_dark`, main roads at rush hour, headwind (compare `edge_data["bearing"]` with `ctx["wind_dir"]`), and Cornmarket/Queen Street during restricted hours. Stub returns 1.0 until written.
+   5. Build the response from `path`:
+      - `route` = `[[G.nodes[n]["y"], G.nodes[n]["x"]] for n in path]`
+      - `elevations_m` = `[G.nodes[n]["elevation"] for n in path]`
+      - `stats`: sum of edge `length`; sum of positive elevation gain; length-weighted share where `highway == "cycleway"`; length-weighted share where `lit` is true; `eta_min = time_model.eta_minutes(...)`
+      - `steps = navigation.build_steps(G, path)` (Should-have; return `[]` until it exists)
+6. `backend/navigation.py: build_steps(G, path)`
+   - For each consecutive pair of nodes read the edge `name`, `length`, `bearing`.
+   - At each junction: bearing change near 0 -> `straight`; clear positive -> `right`; clear negative -> `left`.
+   - Merge consecutive straights on the same street into one step. Last step is `arrive`.
+7. `backend/time_model.py: eta_minutes(route, ctx)`: sum of (edge length / speed) per edge; speed drops on hills and into a headwind.
+8. Back in the browser: `Map.tsx` draws `route`; `RoutePanel.tsx` shows `stats`; `ElevationChart.tsx` plots `elevations_m`; `SufferScore.tsx` is computed from `elevations_m`/`climb_m`.
+
+### 3. Best time to leave
+
+What it is: the same trip, priced for leaving now, +15 min, +30 min ... up to +3 h. Each slot gets the weather, darkness and rush hour for that time, so the best slot is the one with the lowest ETA/score. Simplest version: return the slots and show one line, "Best: leave at 17:45". The chart and the database are extras. It is the TIME theme and HRT's "recommend a time to leave", so keep at least the one-line version.
+
+1. `frontend/components/DepartureChart.tsx` calls `api.ts: getBestDeparture(start, end, profile)` -> `GET /best-departure`.
+2. `backend/main.py: best_departure(...)` -> `time_model.best_departures(start, end, profile)`.
+3. `backend/time_model.py: best_departures(start, end, profile)`
+   ```
+   for t in [now, now+15min, ... now+3h]:               # 12 slots
+       ctx   = get_context(t)
+       route = routing.find_route(start, end, profile, ctx)
+       score = f(route.stats.eta_min, ctx.rain, ctx.is_dark, headwind)
+       db.save_prediction({t, eta_min, score})           # optional, Tiger Data
+   return [Slot, ...]
+   ```
+   12 A* runs per request: if it's slow, cache per (start, end, profile) or search fewer slots.
+
+### 4. Place search
+
+1. Search box in `page.tsx` -> `api.ts: searchPlace(q)` -> `GET /search?q=Radcliffe Camera`
+2. `backend/main.py: search(q)` -> `ai.search_place(q)` -> Nominatim (1 request/s, User-Agent set) -> `[{name, lat, lon}]`
+
+### 5. Navigating
+
+1. `frontend/app/navigate/page.tsx` receives the `RouteResult` and wires up the hooks.
+2. `frontend/hooks/useLocation.ts`: `watchPosition` gives the live position. (Demo: `useSimulatedRide(route)` supplies a fake position moving at bike speed instead.)
+3. `frontend/hooks/useNavigation.ts: useNavigation(route, position)`
+   - Finds the next `Step`.
+   - Measures distance from `position` to the route line; if more than ~30 m for a few seconds, `offRoute = true`.
+4. When `offRoute` (or the "take a wrong turn" demo button): `api.getRoute({start: position, end, profile, depart_at: now})` -> same flow as section 2.
+5. When the next step is near: `api.speak(step.text)` -> section 6 below -> play audio. Fallback: Web Speech `speechSynthesis`.
+6. Wake Lock is requested when the screen opens.
+
+### 6. Speaking
+
+1. `frontend/lib/api.ts: speak(text)` -> `POST /speak`
+2. `backend/main.py: speak(req)` -> `ai.speak(text)` -> ElevenLabs -> audio bytes -> browser plays them.
+
+### 7. Talking to it (push-to-talk)
+
+1. `frontend/components/VoiceButton.tsx` (held) -> `hooks/useVoice.ts` starts `MediaRecorder`.
+2. On release: `api.ts: sendVoice({audio_b64, position, route})` -> `POST /voice`.
+3. `backend/main.py: voice(req)` -> `ai.interpret_voice(audio, text, position, route)`
+4. `backend/ai.py: interpret_voice(...)`: sends the audio, position and current route to Gemini; returns a `VoiceResult`, for example
+   `{action: "new_route", settings: {end: "Radcliffe Camera", ...}, reply: "Quiet route to the Radcliffe Camera, skipping the hill."}`
+5. If `settings` names a place, `main.py` resolves it with `ai.search_place(name)` into coordinates first.
+6. Back in the browser, `useVoice.ts`:
+   1. `api.speak(reply)` and play the audio.
+   2. If `action` is `new_route` or `reroute`: `api.getRoute(...)` with the new settings (section 2), then speak the new steps.
+   3. If `action` is `answer`: nothing more to do.
+7. Fallback: if Gemini audio or ElevenLabs is slow or fails, use Web Speech API for speech in and out.
 
 ## Route behaviour
 

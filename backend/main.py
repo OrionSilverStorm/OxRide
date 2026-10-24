@@ -35,6 +35,7 @@ def health() -> dict:
 def route(req: RouteRequest) -> dict:
     return {
         "route": [req.start, req.end],
+        "elevations_m": [0, 0],
         "stats": {"distance_m": 0, "climb_m": 0, "eta_min": 0,
                   "cycleway_share": 0.0, "lit_share": 0.0},
         "steps": [{"text": "Arrive", "distance_m": 0,

@@ -1,4 +1,4 @@
-"""A*, cost function and ride profiles."""
+# A*, cost function and ride profiles.
 
 from dataclasses import dataclass, field
 
@@ -19,11 +19,12 @@ PROFILES: dict[str, RideProfile] = {
 
 
 def edge_cost(edge_data: dict, profile: RideProfile, ctx: dict) -> float:
-    """length * road-type factor * surface factor + hill penalty, times time_penalty."""
+    # length * road-type factor * surface factor + hill penalty, times time_penalty
     raise NotImplementedError
 
 
 def find_route(start: tuple[float, float], end: tuple[float, float],
                profile: str, ctx: dict) -> dict:
-    """Same fields as the /route output: route, stats, steps."""
+    # Same fields as the /route output.
+    # route: list of [lat, lon] (drawn on the map); stats; steps from navigation.build_steps.
     raise NotImplementedError

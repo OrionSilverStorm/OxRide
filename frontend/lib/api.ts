@@ -14,6 +14,7 @@ export interface Step {
 
 export interface RouteResult {
   route: LatLon[];
+  elevations_m: number[];
   stats: {
     distance_m: number;
     climb_m: number;
