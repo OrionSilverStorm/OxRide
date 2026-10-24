@@ -32,19 +32,57 @@ def parse_times(hourly):
         for t in hourly["time"]
     ]
 
-if __name__ == "__main__":
-    hourly = fetch_weather()
+_weather_cache = None
+
+def get_context(when, weekday_override=None):
+    global _weather_cache
+
+    if _weather_cache is None:
+        _weather_cache = fetch_weather()
+
+    hourly = _weather_cache
     times = parse_times(hourly)
 
-    print("Hours:", len(times))
-    print("Times:", times[:3])
-    print("Wind:", hourly["wind_speed_10m"][:3])
-    print("Timezone:", times[0].tzinfo)
+    utc_hour = when.astimezone(timezone.utc).replace(
+        minute=0, second=0, microsecond=0
+    )
 
-def get_context(depart_at: datetime) -> dict:
-    """hour, is_dark, wind_speed, wind_dir, rain, temperature_c."""
-    raise NotImplementedError
+    # Find the matching forecast hour
+    i = min(
+        range(len(times)),
+        key=lambda j: abs((times[j] - utc_hour).total_seconds())
+    )
 
+    local = when.astimezone(London)
+
+    weekday = (
+        weekday_override
+        if weekday_override is not None
+        else local.weekday()
+    )
+
+    minutes = local.hour * 60 + local.minute
+
+    rush = weekday < 5 and (
+        450 <= minutes < 570 or
+        990 <= minutes < 1110
+    )
+
+    return {
+        "wind_ms": hourly["wind_speed_10m"][i] or 0,
+        "wind_from_deg": hourly["wind_direction_10m"][i] or 0,
+        "rain_prob": (hourly["precipitation_probability"][i] or 0) / 100,
+        "rain_mm": hourly["precipitation"][i] or 0,
+        "dark": hourly["is_day"][i] == 0,
+        "rush": rush,
+        "local": local.isoformat()
+    }
+
+
+if __name__ == "__main__":
+    now = datetime.now(timezone.utc)
+    print(get_context(now))
+    print(get_context(now, weekday_override=0))
 
 def time_penalty(edge_data: dict, ctx: dict) -> float:
     """1.0 = normal, 2.0 = twice as bad.
