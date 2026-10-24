@@ -6,7 +6,7 @@ import requests
 
 London = ZoneInfo("Europe/London")
 Oxford = (51.7520, -1.2577)
-hourly_vars = "wind_speed_10m,wind_direction_10m,precipitation_probability,precipitation"
+hourly_vars = "wind_speed_10m,wind_direction_10m,precipitation_probability,precipitation,is_day"
 wind_at_rider = 0.5
 
 
