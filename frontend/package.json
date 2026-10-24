@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
     "dev:web": "next dev",
-    "dev:api": "cd ../backend && ../.venv/bin/uvicorn main:app --reload --port 8000",
+    "dev:api": "node scripts/dev-api.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
