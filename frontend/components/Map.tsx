@@ -1,5 +1,6 @@
 "use client";
 
+import { ZoomControl } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { useState, useEffect } from "react";
 import {
@@ -92,8 +93,8 @@ export default function Map() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        start: { lat: userPos.lat, lon: userPos.lng }, // Match RouteRequest.start shape
-        end: { lat: targetPos.lat, lon: targetPos.lng }, // Match RouteRequest.end shape
+        start: { lat: userPos.lat, lng: userPos.lng }, // Match RouteRequest.start shape
+        end: { lat: targetPos.lat, lng: targetPos.lng }, // Match RouteRequest.end shape
         profile: "regular", // Must be a value your backend accepts
         depart_at: "null", // Only if the model requires it
       }),
@@ -111,6 +112,7 @@ export default function Map() {
         maxBounds={OXFORD_BOUNDS}
         maxBoundsViscosity={1.0}
         className="h-full w-full"
+        zoomControl={false}
       >
         <TileLayer
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -118,12 +120,13 @@ export default function Map() {
         />
         <UserMarker pos={userPos} setPos={setUserPos} />
         <TargetPin target={targetPos} setTarget={setTargetPos} />
+        <ZoomControl position="bottomright" />
       </MapContainer>
       {/* Button inside the wrapper div, outside <MapContainer> */}
       {/*z-[1000] sits above Leaflet's panes */}
       <button
         onClick={sendPositions}
-        className="absolute top-4 left-1/2 z-[1000] -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
+        className="absolute bottom-4 left-1/2 z-[1000] -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
         disabled={!userPos || !targetPos}
       >
         Ride
