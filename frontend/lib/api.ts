@@ -1,4 +1,5 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Relative on purpose: next.config.ts forwards /api/* to the backend (BACKEND_URL).
+const API_URL = "/api";
 
 export type LatLon = [number, number];
 export type Profile = "fast" | "regular" | "chill";

@@ -24,8 +24,6 @@ router = APIRouter(prefix="/debug")
 
 LatLon = tuple[float, float]
 
-# time_model's speed model uses different profile names from routing.py.
-ETA_PROFILE = {"fast": "road", "regular": "commuter", "chill": "chill"}
 MAIN_ROADS = {"trunk", "trunk_link", "primary", "primary_link", "secondary", "secondary_link"}
 
 # Pure distance: what a car-style "shortest route" would pick. No road preferences,
@@ -358,7 +356,7 @@ def debug_route(req: DebugRouteRequest) -> dict:
     profile = req.profile_override or routing.PROFILES[req.profile]
     real_ctx = main.get_ctx(req.depart_at)
     ctx = {**real_ctx, **(req.ctx_override or {})}
-    eta_profile = ETA_PROFILE.get(req.profile, "commuter")
+    eta_profile = req.profile
 
     start_node, start_snap = nearest_node_fast(*req.start)
     end_node, end_snap = nearest_node_fast(*req.end)

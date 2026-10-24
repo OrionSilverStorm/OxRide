@@ -13,6 +13,7 @@ import {
 } from "react-leaflet";
 
 import L from "leaflet";
+import { getRoute } from "@/lib/api";
 
 // Props for UserMarker: the parent's state value + its setter
 interface UserMarkerProps {
@@ -90,20 +91,18 @@ export default function Map() {
   // In Map: send start/end, get the route back
   const sendPositions = async () => {
     if (!userPos || !targetPos) return; // Need both points
-    const res = await fetch("/api/route", {
-      // Proxied to FastAPI /route
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    let data;
+    try {
+      data = await getRoute({
         start: [userPos.lat, userPos.lng], // [lat, lon], latitude first
         end: [targetPos.lat, targetPos.lng], // [lat, lon], latitude first
         profile: "regular", // "fast" | "regular" | "chill"
         // depart_at left out = leaving now
-      }),
-    });
-    if (!res.ok) return console.warn(res.status, await res.text()); // 404/422/503 reasons (text, so a down backend doesn't crash JSON parsing)
-    const data = await res.json(); // { route, elevations_m, stats, steps }
-    console.log(data);
+      });
+    } catch (e) {
+      return console.warn(e); // 404 no route, 503 graph not loaded, or backend down
+    }
+    console.log(data); // { route, elevations_m, stats, steps }
     setRoute(data.route); // Draws the line below
   };
 

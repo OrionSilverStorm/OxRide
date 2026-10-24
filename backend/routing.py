@@ -34,23 +34,40 @@ def load_graph(path):
 # hill_weight = metres of extra "flat distance" we charge per metre climbed.
 # All these numbers are first guesses, tune them by looking at real routes.
 
+def _with_links(factors):
+    # Slip roads (primary_link, ...) cost the same as the road they belong to.
+    for road in ("trunk", "primary", "secondary", "tertiary"):
+        if road in factors:
+            factors.setdefault(road + "_link", factors[road])
+    return factors
+
+
+# footway: UK cyclists generally can't ride on pavements, so only use them to connect.
+# pedestrian: covers Cornmarket/Queen Street until the restricted-hours rule exists.
+# trunk: the A40/A34 ring road; fast riders tolerate it, chill riders really don't.
 PROFILES = {
     "fast": {
-        "road_type_factors": {"cycleway": 1.0, "residential": 1.0, "tertiary": 1.0,
-                              "secondary": 1.0, "primary": 1.0},
-        "surface_factors": {"asphalt": 1.0, "gravel": 2.0},
+        "road_type_factors": _with_links({
+            "cycleway": 1.0, "path": 1.0, "residential": 1.0, "service": 1.1,
+            "tertiary": 1.0, "secondary": 1.0, "primary": 1.0, "trunk": 2.0,
+            "footway": 3.0, "pedestrian": 2.0}),
+        "surface_factors": {"asphalt": 1.0, "gravel": 2.0, "cobbles": 1.3},
         "hill_weight": 8,
     },
     "regular": {
-        "road_type_factors": {"cycleway": 0.7, "residential": 1.0, "tertiary": 1.3,
-                              "secondary": 1.8, "primary": 2.5},
-        "surface_factors": {"asphalt": 1.0, "gravel": 1.5},
+        "road_type_factors": _with_links({
+            "cycleway": 0.7, "path": 0.9, "residential": 1.0, "service": 1.2,
+            "tertiary": 1.3, "secondary": 1.8, "primary": 2.5, "trunk": 4.0,
+            "footway": 3.0, "pedestrian": 2.5}),
+        "surface_factors": {"asphalt": 1.0, "gravel": 1.5, "cobbles": 1.6},
         "hill_weight": 15,
     },
     "chill": {
-        "road_type_factors": {"cycleway": 0.5, "residential": 0.8, "tertiary": 2.0,
-                              "secondary": 3.5, "primary": 5.0},
-        "surface_factors": {"asphalt": 1.0, "gravel": 1.3},
+        "road_type_factors": _with_links({
+            "cycleway": 0.5, "path": 0.7, "residential": 0.8, "service": 1.2,
+            "tertiary": 2.0, "secondary": 3.5, "primary": 5.0, "trunk": 8.0,
+            "footway": 3.0, "pedestrian": 3.0}),
+        "surface_factors": {"asphalt": 1.0, "gravel": 1.3, "cobbles": 2.0},
         "hill_weight": 25,
     },
 }
@@ -205,11 +222,13 @@ def find_route(start, end, profile_name, ctx):
     elevations = [GRAPH.nodes[n]["elevation"] for n in path]
 
     # add up the facts of every road along the path
+    edges = []
     distance = 0.0
     cycleway = 0.0
     lit = 0.0
     for a, b in zip(path, path[1:]):
         edge, _ = cheapest_edge(GRAPH, a, b, profile, ctx)
+        edges.append(edge)
         distance += edge["length"]
         if edge["highway"] == "cycleway":
             cycleway += edge["length"]
@@ -223,8 +242,8 @@ def find_route(start, end, profile_name, ctx):
     stats = {
         "distance_m": round(distance),
         "climb_m": round(climb),
-        # placeholder: 15 km/h flat. Replace with time_model.eta_minutes(...) when it exists.
-        "eta_min": round(distance / 250, 1),
+        # speed model: slower uphill and into a headwind, capped at 15 mph
+        "eta_min": round(time_model.eta_minutes(edges, ctx, profile_name), 1),
         "cycleway_share": round(cycleway / distance, 2) if distance else 0.0,
         "lit_share": round(lit / distance, 2) if distance else 0.0,
     }
