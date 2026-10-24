@@ -109,7 +109,8 @@ VoiceResult   {action:"new_route"|"reroute"|"answer", settings:{...RouteRequest 
    - Elevation for every node from OpenTopoData (100 points per request, ~1 request/s).
    - Per edge: `grade = (elev_end - elev_start) / length`, plus `osmnx.bearing.add_edge_bearings`.
    - Fill missing `lit` and `surface` with defaults by `highway` type.
-   - Save the graph file. Print how many edges had real vs defaulted `lit`/`surface`.
+   - Save the graph as a pickle, `backend/oxford_graph.pkl` (GraphML turns `lit` into text). `routing.load_graph(path)` loads it at startup. Print how many edges had real vs defaulted `lit`/`surface`.
+   - `highway`, `name`, `surface`, `lit` are single values (lists flattened, gaps filled). `surface` is one of `asphalt | gravel | cobbles`.
 
 ### 1. Server startup
 

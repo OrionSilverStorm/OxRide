@@ -4,6 +4,9 @@ venv/
 __pycache__/
 *.pyc
 
+# osmnx download cache (build_graph.py); can grow to hundreds of MB
+backend/cache/
+
 # Secrets (API keys). Keep a .env.example with empty values instead.
 .env
 .env.*

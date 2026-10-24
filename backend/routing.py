@@ -7,6 +7,7 @@
 
 import heapq
 import math
+import pickle
 
 import time_model
 
@@ -16,6 +17,13 @@ GRAPH = None  # set once at startup with set_graph()
 def set_graph(g):
     global GRAPH
     GRAPH = g
+
+
+def load_graph(path):
+    # Load the graph file made by build_graph.py (a pickle). Call once at startup.
+    with open(path, "rb") as f:
+        set_graph(pickle.load(f))
+
 
 # Ride profiles
 # 
