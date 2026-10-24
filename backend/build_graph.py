@@ -17,19 +17,22 @@ def setup():
 
 
 def get_area_graph(area):
+    setup()
+
     bike = ('["highway"]["area"!~"yes"]["access"!~"private"]'
         '["highway"!~"abandoned|construction|corridor|elevator|escalator|footway|motor|no|planned|platform|proposed|raceway|steps"]'
         '["bicycle"!~"no"]["service"!~"private"]')
     shared = '["highway"="footway"]["bicycle"~"yes|designated|permissive"]'
 
     G = ox.graph_from_place(area, custom_filter=[bike, shared])
+
     setup_graph(G)
+
     return G
 
 def setup_graph(graph):
-    setup()
     add_elevation(graph)
-    add_travel_time_to_all_edges()
+    add_travel_time_to_all_edges(graph)
 
 #--------------------------------------------------
 #                   Add to graph
@@ -67,5 +70,3 @@ def add_travel_time_to_all_edges(graph):
         speed = 15
         add_edge_travel_time(graph, start_node, end_node, speed)
 
-def give_graph_speeds(graph):
-    ...
