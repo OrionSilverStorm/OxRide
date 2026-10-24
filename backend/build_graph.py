@@ -14,6 +14,7 @@ import pickle
 import time
 
 import httpx
+import networkx as nx
 import osmnx as ox
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -47,7 +48,14 @@ def get_area_graph(area):
     # Keep only the part of the map you can actually ride around in both directions.
     # Otherwise one-way streets can leave dead ends where A* finds no route.
     G = ox.truncate.largest_component(G, strongly=True)
+    remove_self_loops(G)
     return G
+
+
+def remove_self_loops(G):
+    # A road that starts and ends at the same junction (a small loop) has no bearing
+    # and is never part of a useful route, so drop it.
+    G.remove_edges_from(list(nx.selfloop_edges(G)))
 
 
 # --------------------------------------------------
@@ -62,6 +70,18 @@ def add_elevation(G):
 
     # grade = rise / length for every road (signed: negative = downhill)
     ox.elevation.add_edge_grades(G)
+    clamp_grades(G)
+
+
+MAX_GRADE = 0.15  # 15%
+
+
+def clamp_grades(G):
+    # The elevation data is coarse (30 m squares), so a 5 m road can look 70% steep.
+    # Oxford has no real slopes like that, so cap the grade to stop noise ruling the cost.
+    for _, _, _, edge in G.edges(keys=True, data=True):
+        edge["grade"] = max(-MAX_GRADE, min(MAX_GRADE, edge["grade"]))
+        edge["grade_abs"] = abs(edge["grade"])
 
 
 def add_elevations_from_opentopodata(G):

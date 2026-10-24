@@ -91,7 +91,7 @@ Pseudo-calls in the order they happen. `file.py: function()` means that function
 ### Data shapes passed around
 
 ```
-RouteRequest  {start:[lat,lon], end:[lat,lon], profile:"road"|"commuter"|"chill", depart_at: ISO string | null (null = now)}
+RouteRequest  {start:[lat,lon], end:[lat,lon], profile:"fast"|"regular"|"chill", depart_at: ISO string | null (null = now)}
 ctx           {hour, is_dark, wind_speed, wind_dir, rain, temperature_c}      # from time_model.get_context
 RouteResult   {route:[[lat,lon],...],          # drawn on the map
                elevations_m:[...],             # one per route point, for ElevationChart + suffer score
@@ -199,7 +199,7 @@ What it is: a small hint, not the main feature. The route is always planned for 
 
 ## Route behaviour
 
-- Profiles: the UI shows fast / regular / longest (chillest); the code identifiers are `road` / `commuter` / `chill`. Each profile is a different set of cost factors.
+- Profiles: `fast`, `regular`, `chill` (same names in the UI, API and code). Each profile is a different set of cost factors in `routing.PROFILES`: chill = cycle paths and quiet roads even if longer, regular = prefers cycle paths and avoids repeated climbs, fast = mostly the shortest route.
 - The route depends on departure time: darkness (prefer lit streets), rush hour (quiet roads over main roads), wind and rain, temperature, hills (suffer score), and Oxford-specific cycling restrictions (avoid Cornmarket and Queen Street during restricted hours).
 
 ## Endpoints

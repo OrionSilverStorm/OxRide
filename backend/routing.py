@@ -2,8 +2,8 @@
 #
 # How it fits together:
 #   find_route -> find_path -> astar -> edge_cost -> time_model.time_penalty
-# The graph (GRAPH) is a networkx MultiDiGraph made by build_graph.py. Until that exists,
-# sample_graph.py builds a small fake one with the same attribute names.
+# The graph (GRAPH) is a networkx MultiDiGraph made by build_graph.py and saved to
+# oxford_graph.pkl. Load it once at startup with load_graph("oxford_graph.pkl").
 
 import heapq
 import math

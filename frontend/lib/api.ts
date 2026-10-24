@@ -1,7 +1,7 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type LatLon = [number, number];
-export type Profile = "road" | "commuter" | "chill";
+export type Profile = "fast" | "regular" | "chill";
 export type Maneuver = "left" | "right" | "straight" | "arrive";
 
 export interface Step {
