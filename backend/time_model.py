@@ -140,23 +140,13 @@ RHO = 1.225       # Air density
 MAX_SPEED = 15 * 0.44704  # 15 mph: what Lime/Voi e-bikes are limited to in the UK
 SPEED_SCALE = 1.0
 
-# Same names as routing.PROFILES and the API.
-PROFILES = {
-    "fast": {
-        "power": 160,
-        "cda": 0.32,
-        "crr": 0.005
-    },
-    "regular": {
-        "power": 80,
-        "cda": 0.50,
-        "crr": 0.007
-    },
-    "chill": {
-        "power": 55,
-        "cda": 0.55,
-        "crr": 0.008
-    }
+# One rider for every profile: fast/regular/chill only change which roads the route
+# uses, not how fast you ride. 160 W would do ~18 mph on the flat, so the 15 mph cap
+# sets the flat speed; hills and headwind slow you down from there.
+RIDER = {
+    "power": 160,
+    "cda": 0.32,
+    "crr": 0.005
 }
 
 def power_needed(v, grade, head, pr):
@@ -173,8 +163,8 @@ def power_needed(v, grade, head, pr):
 
     return (gravity + rolling + air) * v
 
-def speed_ms(grade, head, profile):
-    pr = PROFILES[profile]
+def speed_ms(grade, head):
+    pr = RIDER
 
     low = 0.5
     high = 25.0
@@ -198,7 +188,7 @@ def speed_ms(grade, head, profile):
 
 
 
-def eta_minutes(edges, ctx, profile):
+def eta_minutes(edges, ctx):
     total_seconds = 0.0
 
     for edge in edges:
@@ -210,7 +200,7 @@ def eta_minutes(edges, ctx, profile):
         head = headwind(bearing, ctx)
 
         # Predict cycling speed
-        speed = speed_ms(grade, head, profile)
+        speed = speed_ms(grade, head)
 
         # Rain reduces speed by 10%
         if ctx["rain_mm"] > 0:
@@ -254,7 +244,7 @@ def best_departures(route_fn, profile="regular", now=None):
 
         ctx = get_context(t)
         edges = route_fn(ctx)
-        eta = eta_minutes(edges, ctx, profile)
+        eta = eta_minutes(edges, ctx)
 
         rain_prob = ctx["rain_prob"]
 

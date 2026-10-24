@@ -1,9 +1,13 @@
+# What the API server needs (this is what Vercel installs).
+# Rebuilding the map graph needs more: pip install -r requirements-build.txt
 fastapi
 uvicorn
-osmnx
 networkx
 numpy
+shapely
 httpx
+requests
+tzdata
 google-genai
 elevenlabs
 psycopg[binary]
