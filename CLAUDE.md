@@ -91,14 +91,14 @@ Pseudo-calls in the order they happen. `file.py: function()` means that function
 ### Data shapes passed around
 
 ```
-RouteRequest  {start:[lat,lon], end:[lat,lon], profile:"road"|"commuter"|"chill", depart_at: ISO string | null}
+RouteRequest  {start:[lat,lon], end:[lat,lon], profile:"road"|"commuter"|"chill", depart_at: ISO string | null (null = now)}
 ctx           {hour, is_dark, wind_speed, wind_dir, rain, temperature_c}      # from time_model.get_context
 RouteResult   {route:[[lat,lon],...],          # drawn on the map
                elevations_m:[...],             # one per route point, for ElevationChart + suffer score
                stats:{distance_m, climb_m, eta_min, cycleway_share, lit_share},
                steps:[Step]}
 Step          {text, distance_m, lat, lon, maneuver:"left"|"right"|"straight"|"arrive"}
-Slot          {depart_at, eta_min, score}                                      # one per 15-minute departure option
+Slot          {depart_at, eta_min, rain, wind_speed}                           # one per 15-minute departure option
 VoiceResult   {action:"new_route"|"reroute"|"answer", settings:{...RouteRequest fields...}, reply}
 ```
 
@@ -146,20 +146,20 @@ VoiceResult   {action:"new_route"|"reroute"|"answer", settings:{...RouteRequest 
 
 ### 3. Best time to leave
 
-What it is: the same trip, priced for leaving now, +15 min, +30 min ... up to +3 h. Each slot gets the weather, darkness and rush hour for that time, so the best slot is the one with the lowest ETA/score. Simplest version: return the slots and show one line, "Best: leave at 17:45". The chart and the database are extras. It is the TIME theme and HRT's "recommend a time to leave", so keep at least the one-line version.
+What it is: a small hint, not the main feature. The route is always planned for the departure time in the request (`depart_at`, which is *now* unless the rider picked another time). The hint is one extra line under the route, such as "Leave in 20 min: the rain stops and the ride is 3 min faster". If no later slot is clearly better, show no hint. The departure chart and the database are extras (cut them first), but keep the one-line hint: it is the TIME theme and HRT's "recommend a time to leave".
 
-1. `frontend/components/DepartureChart.tsx` calls `api.ts: getBestDeparture(start, end, profile)` -> `GET /best-departure`.
+1. `frontend/components/DepartureChart.tsx` (or just a text line in `RoutePanel.tsx`) calls `api.ts: getBestDeparture(start, end, profile)` -> `GET /best-departure`.
 2. `backend/main.py: best_departure(...)` -> `time_model.best_departures(start, end, profile)`.
 3. `backend/time_model.py: best_departures(start, end, profile)`
    ```
-   for t in [now, now+15min, ... now+3h]:               # 12 slots
-       ctx   = get_context(t)
-       route = routing.find_route(start, end, profile, ctx)
-       score = f(route.stats.eta_min, ctx.rain, ctx.is_dark, headwind)
-       db.save_prediction({t, eta_min, score})           # optional, Tiger Data
+   route = routing.find_route(start, end, profile, get_context(now))   # ONE A* run, for leaving now
+   for t in [now, now+15min, ... now+3h]:                              # 12 slots
+       ctx   = get_context(t)                                          # just reads the cached forecast row
+       eta   = eta_minutes(route, ctx)                                 # cheap: no new A*
+       db.save_prediction({t, eta, rain, wind_speed})                  # optional, Tiger Data
    return [Slot, ...]
    ```
-   12 A* runs per request: if it's slow, cache per (start, end, profile) or search fewer slots.
+   The route is held fixed across slots, so this is one A* run plus 12 cheap ETA calculations. The frontend picks the best slot (lowest ETA, or rain/wind clearly better than now) and writes the hint line from the slot's `rain` and `wind_speed`.
 
 ### 4. Place search
 
