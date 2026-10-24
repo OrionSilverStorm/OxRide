@@ -26,6 +26,12 @@ interface TargetPinProps {
   setTarget: (p: L.LatLng) => void; // Updates the parent's state
 }
 
+// Module level: one Photon result (coordinates are [lon, lat])
+interface Hit {
+  geometry: { coordinates: [number, number] };
+  properties: { osm_id: number; name?: string; street?: string };
+}
+
 const OXFORD_CENTER: [number, number] = [51.752, -1.2577];
 const OXFORD_BOUNDS = L.latLngBounds([51.69, -1.37], [51.82, -1.14]);
 
@@ -87,7 +93,13 @@ export default function Map() {
   let [route, setRoute] = useState<[number, number][] | null>(null); // Route as [lat, lon] points, null until a ride is planned
   //////////////////////////////////////////////////////////////////////////
 
-  // In Map: send start/end, get the route back
+  // Moves the target and removes the stale route line
+  const placeTarget = (p: L.LatLng) => {
+    setTargetPos(p);
+    setRoute(null);
+  };
+
+  // Routing
   const sendPositions = async () => {
     if (!userPos || !targetPos) return; // Need both points
     const res = await fetch("/api/route", {
@@ -107,9 +119,58 @@ export default function Map() {
     setRoute(data.route); // Draws the line below
   };
 
+  ///******************************************************************************************** */
+  //Search Bar
+  const [query, setQuery] = useState(""); // Text in the search box
+  const [map, setMap] = useState<L.Map | null>(null); // Lets us fly the map from outside MapContainer
+
+  const search = async () => {
+    if (!query.trim()) return; // Ignore empty input
+    try {
+      const url =
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&bounded=1` + // bounded=1: only results inside the viewbox
+        `&viewbox=-1.37,51.82,-1.14,51.69` + // Oxford bounds: left,top,right,bottom (lng,lat)
+        `&q=${encodeURIComponent(query)}`; // Escape the text
+      const [hit] = await (await fetch(url)).json(); // First result, or undefined
+      if (!hit) return console.warn("No results"); // Nothing found
+      const p = L.latLng(+hit.lat, +hit.lon); // Nominatim returns strings, so convert
+      if (!OXFORD_BOUNDS.contains(p)) return; // Safety check
+      placeTarget(p); // Drop the red pin
+      map?.flyTo(p, 16); // Move the map there
+    } catch (err) {
+      console.warn("Search failed:", err); // Network or parse error
+    }
+  };
+
+  //autocomplete search
+  const [results, setResults] = useState<Hit[]>([]); // Suggestions
+
+  // Fetch suggestions as the user types, cancelling stale requests
+  useEffect(() => {
+    if (query.length < 2) return setResults([]);
+    const ctrl = new AbortController();
+    fetch(
+      `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=5&bbox=-1.37,51.69,-1.14,51.82`,
+      { signal: ctrl.signal },
+    )
+      .then((r) => r.json())
+      .then((d) => setResults(d.features))
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [query]);
+
+  // Click a suggestion: drop the pin, fly there, close the list
+  const pick = (h: Hit) => {
+    const [lon, lat] = h.geometry.coordinates;
+    setTargetPos(L.latLng(lat, lon));
+    map?.flyTo([lat, lon], 16);
+    setResults([]);
+  };
+
   return (
     <div className="h-full w-full">
       <MapContainer
+        ref={setMap}
         center={OXFORD_CENTER}
         zoom={14}
         minZoom={12}
@@ -125,7 +186,7 @@ export default function Map() {
           attribution="&copy; OpenStreetMap contributors"
         />
         <UserMarker pos={userPos} setPos={setUserPos} />
-        <TargetPin target={targetPos} setTarget={setTargetPos} />
+        <TargetPin target={targetPos} setTarget={placeTarget} />
         {route && (
           <Polyline
             positions={route}
@@ -134,6 +195,44 @@ export default function Map() {
         )}{" "}
         {/* The planned route */}
       </MapContainer>
+      {/* Search bar */}
+      {/* Search bar: input + clear button + message, stacked */}
+      <div className="absolute left-1/2 top-4 z-[1000] w-64 -translate-x-1/2">
+        <div className="relative">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)} // Keep state in sync
+            onKeyDown={(e) => e.key === "Enter" && search()} // Search on Enter
+            placeholder="Search Oxford..."
+            className="w-full rounded bg-white py-2 pl-3 pr-8 shadow"
+          />
+          {query && (
+            <button
+              onClick={() => {
+                setQuery("");
+              }} // Clear text and message
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+        {/* autocomplete searchbar */}
+        {results.length > 0 && (
+          <ul className="mt-1 rounded bg-white text-sm shadow">
+            {results.map((h) => (
+              <li
+                key={h.properties.osm_id}
+                onClick={() => pick(h)}
+                className="cursor-pointer px-3 py-2 hover:bg-gray-100"
+              >
+                {h.properties.name ?? h.properties.street}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       {/* Button inside the wrapper div, outside <MapContainer> */}
       {/*z-[1000] sits above Leaflet's panes */}
       <button
@@ -142,6 +241,13 @@ export default function Map() {
         disabled={!userPos || !targetPos}
       >
         Ride
+      </button>
+      <button
+        onClick={() => userPos && map?.flyTo(userPos, 16)} // Fly back to the blue dot
+        disabled={!userPos}
+        className="absolute bottom-20 left-3 z-[1000] rounded bg-white px-3 py-2 shadow disabled:opacity-50"
+      >
+        📍
       </button>
     </div>
   );
