@@ -75,3 +75,97 @@ export const speak = (text: string) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
   });
+
+// --- Debug panel (/debug). Mirrors backend/debug.py. ---
+
+export interface ProfileParams {
+  road_type_factors: Record<string, number>;
+  surface_factors: Record<string, number>;
+  hill_weight: number;
+}
+
+export interface DebugProfiles {
+  profiles: Record<Profile, ProfileParams>;
+  highways: { highway: string; km: number }[];
+  surfaces: string[];
+  google_enabled: boolean;
+}
+
+export interface DebugEdge {
+  name: string;
+  highway: string;
+  surface: string;
+  lit: boolean;
+  length_m: number;
+  grade_pct: number;
+  bearing: number;
+  road_factor: number;
+  surface_factor: number;
+  hill_penalty: number;
+  base_cost: number;
+  time_penalty: number;
+  headwind_ms: number;
+  cost: number;
+  cost_per_m: number;
+  matches_edge_cost: boolean;
+  coords: LatLon[];
+}
+
+export interface DebugSummary {
+  distance_m: number;
+  climb_m: number;
+  cost: number;
+  eta_min: number | null;
+  cycleway_share: number;
+  main_road_share: number;
+  lit_share: number;
+  rough_surface_share: number;
+  max_grade_pct: number;
+  turns: number;
+}
+
+export type DebugRouteId = "ours" | "shortest" | "google" | "drawn";
+
+export interface DebugRoute {
+  id: DebugRouteId;
+  label: string;
+  edges: DebugEdge[];
+  elevations_m: number[];
+  summary: DebugSummary;
+  by_highway: Record<string, { length_m: number; cost: number }>;
+  cost_check_ok: boolean;
+  astar?: { expanded_count: number; ms: number; expanded?: LatLon[]; graph_nodes?: number };
+  google?: { distance_m: number | null; duration_min: number; points: LatLon[] };
+}
+
+export type DebugCtx = Record<string, number | boolean | string>;
+
+export interface DebugRouteResult {
+  ctx: DebugCtx;
+  ctx_from_weather: DebugCtx;
+  profile_used: ProfileParams;
+  start_node: { id: number; snap_m: number; coord: LatLon };
+  end_node: { id: number; snap_m: number; coord: LatLon };
+  routes: DebugRoute[];
+  warnings: string[];
+}
+
+export interface DebugRouteRequest {
+  start: LatLon;
+  end: LatLon;
+  profile: Profile;
+  depart_at?: string | null;
+  profile_override?: ProfileParams | null;
+  ctx_override?: DebugCtx | null;
+  waypoints?: LatLon[] | null;
+  google?: boolean;
+}
+
+export const getDebugProfiles = () => request<DebugProfiles>("/debug/profiles");
+
+export const debugRoute = (body: DebugRouteRequest) =>
+  request<DebugRouteResult>("/debug/route", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
