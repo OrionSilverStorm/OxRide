@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import debug
 import routing
 import time_model
 
@@ -34,6 +35,9 @@ app = FastAPI(title="OxRide", lifespan=lifespan)
 # The website runs on another address (localhost:3000, Vercel), so the browser needs
 # this to allow it to call the API.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# /debug/*: the routing debug panel (frontend/app/debug).
+app.include_router(debug.router)
 
 class RouteRequest(BaseModel):
     start: LatLon
