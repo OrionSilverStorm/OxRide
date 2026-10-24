@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   experimental: {
     agentFeedback: true,
   },
+  async rewrites() {
+  return [{ source: "/api/route", destination: "http://localhost:8000/route" }];
+},
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {

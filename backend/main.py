@@ -33,7 +33,6 @@ app = FastAPI(title="OxRide", lifespan=lifespan)
 # this to allow it to call the API.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-
 class RouteRequest(BaseModel):
     start: LatLon
     end: LatLon
@@ -63,12 +62,12 @@ def get_ctx(depart_at):
 
 
 @app.get("/health")
-def health() -> dict:
+async def health() -> dict:
     return {"status": "ok", "graph_loaded": routing.GRAPH is not None}
 
 
 @app.post("/route")
-def route(req: RouteRequest) -> dict:
+async def route(req: RouteRequest) -> dict:
     if routing.GRAPH is None:
         raise HTTPException(status_code=503, detail="graph not loaded: run python build_graph.py")
 
@@ -80,20 +79,20 @@ def route(req: RouteRequest) -> dict:
 
 
 @app.get("/best-departure")
-def best_departure(start: str, end: str, profile: Profile = "regular") -> list:
+async def best_departure(start: str, end: str, profile: Profile = "regular") -> list:
     return []
 
 
 @app.get("/search")
-def search(q: str) -> list:
+async def search(q: str) -> list:
     return []
 
 
 @app.post("/voice")
-def voice(req: VoiceRequest) -> dict:
+async def voice(req: VoiceRequest) -> dict:
     return {"action": "answer", "settings": {}, "reply": "Okay."}
 
 
 @app.post("/speak")
-def speak(req: SpeakRequest) -> dict:
+async def speak(req: SpeakRequest) -> dict:
     return {"audio": None}

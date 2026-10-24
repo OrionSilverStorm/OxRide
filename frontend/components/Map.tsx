@@ -12,6 +12,18 @@ import {
 
 import L from "leaflet";
 
+// Props for UserMarker: the parent's state value + its setter
+interface UserMarkerProps {
+  pos: L.LatLng | null; // User's position, null until found
+  setPos: (p: L.LatLng) => void; // Updates the parent's state
+}
+
+// Props for TargetPin: the parent's state value + its setter
+interface TargetPinProps {
+  target: L.LatLng | null; // Target position, null until the user clicks
+  setTarget: (p: L.LatLng) => void; // Updates the parent's state
+}
+
 const OXFORD_CENTER: [number, number] = [51.752, -1.2577];
 const OXFORD_BOUNDS = L.latLngBounds([51.69, -1.37], [51.82, -1.14]);
 
@@ -30,9 +42,7 @@ const targetIcon = L.divIcon({
   iconAnchor: [8, 8], // Centre of the dot sits exactly on the clicked point
 });
 
-function TargetPin() {
-  const [target, setTarget] = useState<L.LatLng | null>(null); // Target position, null until the user clicks
-
+function TargetPin({ target, setTarget }: TargetPinProps) {
   // Attach map event handlers (react-leaflet removes them automatically on unmount)
   useMapEvents({
     click: (e) => setTarget(e.latlng), // Move the pin to wherever the user clicks
@@ -41,9 +51,8 @@ function TargetPin() {
   return target && <Marker position={target} icon={targetIcon} />; // Render the pin once placed, nothing before
 }
 
-function UserMarker() {
+function UserMarker({ pos, setPos }: UserMarkerProps) {
   const map = useMap(); // Get the Leaflet map instance
-  const [pos, setPos] = useState<L.LatLng | null>(null); // User's position, null until found
 
   useEffect(() => {
     // Runs when the browser returns the user's location
@@ -52,12 +61,13 @@ function UserMarker() {
         // Only continue if inside Oxford bounds
         setPos(e.latlng); // Save position so the marker renders
         map.flyTo(e.latlng, 16); // Animate the map to the user, zoom 16
-        console.log(e.latlng);
       }
     };
 
     // Register the listener, then ask the browser for the location
-    map.on("locationfound", onFound).locate();
+    map
+      .on("locationfound", onFound)
+      .locate({ enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
 
     // Cleanup on unmount: remove listener and stop locating
     return () => {
@@ -69,6 +79,29 @@ function UserMarker() {
 }
 
 export default function Map() {
+  //start and end location
+  let [userPos, setUserPos] = useState<L.LatLng | null>(null); // User's position, null until found
+  let [targetPos, setTargetPos] = useState<L.LatLng | null>(null); // Target position, null until the user clicks
+  //////////////////////////////////////////////////////////////////////////
+
+  // In Map: send start/end, get the route back
+  const sendPositions = async () => {
+    if (!userPos || !targetPos) return; // Need both points
+    const res = await fetch("/api/route", {
+      // Proxied to FastAPI /route
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start: { lat: userPos.lat, lon: userPos.lng }, // Match RouteRequest.start shape
+        end: { lat: targetPos.lat, lon: targetPos.lng }, // Match RouteRequest.end shape
+        profile: "regular", // Must be a value your backend accepts
+        depart_at: "null", // Only if the model requires it
+      }),
+    });
+    if (!res.ok) return console.warn(res.status, (await res.json()).detail); // 404/422/503 reasons
+    console.log(await res.json()); // The route
+  };
+
   return (
     <div className="h-full w-full">
       <MapContainer
@@ -83,9 +116,18 @@ export default function Map() {
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution="&copy; OpenStreetMap contributors"
         />
-        <UserMarker />
-        <TargetPin />
+        <UserMarker pos={userPos} setPos={setUserPos} />
+        <TargetPin target={targetPos} setTarget={setTargetPos} />
       </MapContainer>
+      {/* Button inside the wrapper div, outside <MapContainer> */}
+      {/*z-[1000] sits above Leaflet's panes */}
+      <button
+        onClick={sendPositions}
+        className="absolute top-4 left-1/2 z-[1000] -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
+        disabled={!userPos || !targetPos}
+      >
+        Ride
+      </button>
     </div>
   );
 }
