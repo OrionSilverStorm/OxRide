@@ -128,16 +128,17 @@ def time_penalty(edge, ctx):
 MASS = 85.0       # Rider + bicycle mass (kg)
 G = 9.81          # Gravitational acceleration
 RHO = 1.225       # Air density
-MAX_SPEED = 30 / 3.6
+MAX_SPEED = 15 * 0.44704  # 15 mph: what Lime/Voi e-bikes are limited to in the UK
 SPEED_SCALE = 1.0
 
+# Same names as routing.PROFILES and the API.
 PROFILES = {
-    "road": {
+    "fast": {
         "power": 160,
         "cda": 0.32,
         "crr": 0.005
     },
-    "commuter": {
+    "regular": {
         "power": 80,
         "cda": 0.50,
         "crr": 0.007
@@ -218,45 +219,50 @@ def eta_minutes(edges, ctx, profile):
 
     return total_seconds / 60
 
-ctx = {
-    "wind_ms": 10,
-    "wind_from_deg": 270,
-    "rain_mm": 0
-}
 
-headwind_route = [
-    {"length": 1000, "grade": 0, "bearing": 270}
-]
-
-tailwind_route = [
-    {"length": 1000, "grade": 0, "bearing": 90}
-]
-
-head_eta = eta_minutes(
-    headwind_route, ctx, "commuter"
-)
-
-tail_eta = eta_minutes(
-    tailwind_route, ctx, "commuter"
-)
-
-print("Headwind ETA:", head_eta)
-print("Tailwind ETA:", tail_eta)
-
-assert head_eta > tail_eta
-print("Stage 6 passed")
-
-wet_ctx = ctx.copy()
-wet_ctx["rain_mm"] = 1.0
-
-wet_eta = eta_minutes(
-    headwind_route, wet_ctx, "commuter"
-)
-
-assert wet_eta > head_eta
-print("Rain test passed")
 
 def best_departures(start: tuple[float, float], end: tuple[float, float],
                     profile: str) -> list[dict]:
     """ETA and score for each 15-minute slot over the next three hours."""
     raise NotImplementedError
+
+
+if __name__ == "__main__":
+    # Quick self-test: python time_model.py
+    ctx = {
+        "wind_ms": 10,
+        "wind_from_deg": 270,
+        "rain_mm": 0
+    }
+
+    headwind_route = [
+        {"length": 1000, "grade": 0, "bearing": 270}
+    ]
+
+    tailwind_route = [
+        {"length": 1000, "grade": 0, "bearing": 90}
+    ]
+
+    head_eta = eta_minutes(
+        headwind_route, ctx, "regular"
+    )
+
+    tail_eta = eta_minutes(
+        tailwind_route, ctx, "regular"
+    )
+
+    print("Headwind ETA:", head_eta)
+    print("Tailwind ETA:", tail_eta)
+
+    assert head_eta > tail_eta
+    print("Stage 6 passed")
+
+    wet_ctx = ctx.copy()
+    wet_ctx["rain_mm"] = 1.0
+
+    wet_eta = eta_minutes(
+        headwind_route, wet_ctx, "regular"
+    )
+
+    assert wet_eta > head_eta
+    print("Rain test passed")
