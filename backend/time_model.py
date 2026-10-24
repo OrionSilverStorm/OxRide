@@ -7,6 +7,7 @@ import requests
 London = ZoneInfo("Europe/London")
 Oxford = (51.7520, -1.2577)
 hourly_vars = "wind_speed_10m,wind_direction_10m,precipitation_probability,precipitation,is_day"
+wind_at_rider = 0.5
 
 
 def fetch_weather():
@@ -78,11 +79,24 @@ def get_context(when, weekday_override=None):
         "local": local.isoformat()
     }
 
+#how much wind helps or doesnt help
+def headwind(bearing, ctx):
+    if bearing is None:
+        return 0.0
 
-if __name__ == "__main__":
-    now = datetime.now(timezone.utc)
-    print(get_context(now))
-    print(get_context(now, weekday_override=0))
+    wind_speed = ctx["wind_ms"]*wind_at_rider
+    wind_direction = ctx["wind_from_deg"]
+    angle = math.radians(bearing - wind_direction)
+    return wind_speed * math.cos(angle)
+
+ctx ={
+    "wind_ms": 10,
+    "wind_from_deg": 270
+}
+print("Headwind:", headwind(270,ctx))
+print("Tailwind:", headwind(90, ctx))
+print("Crosswind:", headwind(0, ctx))
+print("Missing bearing:",headwind(None, ctx))
 
 def time_penalty(edge_data: dict, ctx: dict) -> float:
     """1.0 = normal, 2.0 = twice as bad.
