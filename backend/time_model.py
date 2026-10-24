@@ -6,7 +6,7 @@ import requests
 
 London = ZoneInfo("Europe/London")
 Oxford = (51.7520, -1.2577)
-hourly_vars = "wind_speed_10m,wind_direction_10m,precipitation_probability,precipitation,is_day"
+hourly_vars = "wind_speed_10m,wind_direction_10m,precipitation_probability,precipitation"
 wind_at_rider = 0.5
 
 
@@ -89,27 +89,172 @@ def headwind(bearing, ctx):
     angle = math.radians(bearing - wind_direction)
     return wind_speed * math.cos(angle)
 
-ctx ={
-    "wind_ms": 10,
-    "wind_from_deg": 270
+
+
+
+def time_penalty(edge, ctx):
+    p = 1.0
+
+    def first(v):
+        if isinstance(v, list):
+            return v[0] if v else None
+        return v
+
+    highway = first(edge.get("highway"))
+    surface = first(edge.get("surface"))
+    bearing = first(edge.get("bearing"))
+
+    #Rush hour penalty
+    main_roads = {
+        "trunk", "primary", "secondary",
+        "trunk_link", "primary_link", "secondary_link"
+    }
+
+    if ctx["rush"] and highway in main_roads:
+        p *= 1.5
+
+    #surface penalty in rain
+    if ctx["rain_mm"] > 0 and surface == "gravel":
+        p *= 1.4
+
+    #Headwind penalty
+    hw = headwind(bearing, ctx)
+
+    if hw > 0:
+        p *= 1 + 0.03 * hw
+
+    return p
+
+MASS = 85.0       # Rider + bicycle mass (kg)
+G = 9.81          # Gravitational acceleration
+RHO = 1.225       # Air density
+MAX_SPEED = 30 / 3.6
+SPEED_SCALE = 1.0
+
+PROFILES = {
+    "road": {
+        "power": 160,
+        "cda": 0.32,
+        "crr": 0.005
+    },
+    "commuter": {
+        "power": 80,
+        "cda": 0.50,
+        "crr": 0.007
+    },
+    "chill": {
+        "power": 55,
+        "cda": 0.55,
+        "crr": 0.008
+    }
 }
-print("Headwind:", headwind(270,ctx))
-print("Tailwind:", headwind(90, ctx))
-print("Crosswind:", headwind(0, ctx))
-print("Missing bearing:",headwind(None, ctx))
 
-def time_penalty(edge_data: dict, ctx: dict) -> float:
-    """1.0 = normal, 2.0 = twice as bad.
+def power_needed(v, grade, head, pr):
+    theta = math.atan(grade or 0.0)
 
-    Unlit after dark, main roads at rush hour, headwind, and cycling-restricted
-    streets (Cornmarket, Queen Street) during restricted hours cost more.
-    """
-    return 1.0
+    gravity = MASS * G * math.sin(theta)
+
+    rolling = MASS * G * pr["crr"] * math.cos(theta)
+
+    air = (
+        0.5 * RHO * pr["cda"]
+        * max(v + head, 0) ** 2
+    )
+
+    return (gravity + rolling + air) * v
+
+def speed_ms(grade, head, profile):
+    pr = PROFILES[profile]
+
+    low = 0.5
+    high = 25.0
+
+    for _ in range(40):
+        mid = (low + high) / 2
+
+        required = power_needed(
+            mid, grade, head, pr
+        )
+
+        if required > pr["power"]:
+            high = mid
+        else:
+            low = mid
+
+    speed = (low + high) / 2
+
+    return min(speed, MAX_SPEED) * SPEED_SCALE
 
 
-def eta_minutes(route: dict, ctx: dict) -> float:
-    raise NotImplementedError
 
+
+
+def eta_minutes(edges, ctx, profile):
+    total_seconds = 0.0
+
+    for edge in edges:
+        length = edge["length"]
+        grade = edge.get("grade") or 0.0
+        bearing = edge.get("bearing")
+
+        # Calculate headwind for this road
+        head = headwind(bearing, ctx)
+
+        # Predict cycling speed
+        speed = speed_ms(grade, head, profile)
+
+        # Rain reduces speed by 10%
+        if ctx["rain_mm"] > 0:
+            speed *= 0.9
+
+        # Avoid division by zero
+        speed = max(speed, 0.5)
+
+        # Time for this road segment
+        time_seconds = length / speed
+
+        # Add junction delay
+        total_seconds += time_seconds + 2
+
+    return total_seconds / 60
+
+ctx = {
+    "wind_ms": 10,
+    "wind_from_deg": 270,
+    "rain_mm": 0
+}
+
+headwind_route = [
+    {"length": 1000, "grade": 0, "bearing": 270}
+]
+
+tailwind_route = [
+    {"length": 1000, "grade": 0, "bearing": 90}
+]
+
+head_eta = eta_minutes(
+    headwind_route, ctx, "commuter"
+)
+
+tail_eta = eta_minutes(
+    tailwind_route, ctx, "commuter"
+)
+
+print("Headwind ETA:", head_eta)
+print("Tailwind ETA:", tail_eta)
+
+assert head_eta > tail_eta
+print("Stage 6 passed")
+
+wet_ctx = ctx.copy()
+wet_ctx["rain_mm"] = 1.0
+
+wet_eta = eta_minutes(
+    headwind_route, wet_ctx, "commuter"
+)
+
+assert wet_eta > head_eta
+print("Rain test passed")
 
 def best_departures(start: tuple[float, float], end: tuple[float, float],
                     profile: str) -> list[dict]:
