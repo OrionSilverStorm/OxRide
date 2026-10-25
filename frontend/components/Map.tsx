@@ -1,7 +1,7 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, useMap, useMapEvents } from "react-leaflet";
 
 import L from "leaflet";
@@ -52,9 +52,9 @@ const TILES = {
   dark: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
 };
 
-// Round floating map button (Google Maps style), at least 48px
+// Round floating map button (Google Maps style): drawn at 40px, taps still count over 48px
 const FAB =
-  "pointer-events-auto flex size-12 items-center justify-center rounded-full bg-card text-foreground shadow-md disabled:opacity-50";
+  "pointer-events-auto tap-48 flex size-10 items-center justify-center rounded-full bg-card text-foreground shadow-md disabled:opacity-50";
 
 // Props for UserMarker: the parent's state value + its setter
 interface UserMarkerProps {
@@ -346,8 +346,8 @@ export default function Map() {
   const StepIcon = MANEUVER_ICON[step?.maneuver ?? "straight"];
   const NextIcon = MANEUVER_ICON[next?.maneuver ?? "arrive"];
 
-  // Ride type picker: chips under the search bar, a segmented row while navigating
-  const profileButtons = (onPick: (p: Profile) => void) =>
+  // Ride type picker: small chips under the search bar, an even row in the sheet while navigating
+  const profileButtons = (onPick: (p: Profile) => void, even = false) =>
     PROFILES.map((p) => {
       const Icon = PROFILE_ICON[p];
       const on = profile === p;
@@ -356,17 +356,45 @@ export default function Map() {
           key={p}
           onClick={() => onPick(p)}
           aria-pressed={on}
-          className={`pointer-events-auto flex h-12 flex-1 items-center justify-center gap-2 rounded-full px-4 text-base capitalize shadow-md ${
-            on ? "bg-primary text-primary-foreground" : "bg-card text-foreground"
-          }`}
+          className={`pointer-events-auto tap-48 flex h-9 items-center justify-center gap-2 rounded-full px-4 text-sm capitalize ${
+            even ? "flex-1" : "shadow-md"
+          } ${on ? "bg-primary text-primary-foreground" : even ? "bg-surface text-foreground" : "bg-card text-foreground"}`}
         >
-          <Icon className="size-5" />
+          <Icon className="size-4" />
           {p}
         </button>
       );
     });
 
+  // The mic: hold and speak ("chill ride to the Bodleian"), or tap once to keep listening
+  const micProps = {
+    onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => {
+      e.currentTarget.setPointerCapture(e.pointerId); // still "held" if the finger slides off
+      voice.press();
+    },
+    onPointerUp: voice.release,
+    onPointerCancel: voice.release,
+    onContextMenu: (e: ReactMouseEvent) => e.preventDefault(), // no long-press menu on phones
+    "aria-label": "Speak a command",
+    "aria-pressed": voice.mode !== "off",
+  };
+  const micPing = voice.mode !== "off" && (
+    <span className="absolute inset-0 animate-ping rounded-full bg-primary opacity-50" />
+  );
+
   const status = voiceStatus || listening;
+
+  // What the voice command is doing right now: next to the mic (under the search bar, or above the big mic)
+  const voiceBubble = (status || caption || voice.error) && (
+    <div className="flex justify-center px-4">
+      <div aria-live="polite" className="max-w-xs rounded-2xl bg-card px-4 py-2 text-sm text-foreground shadow-md">
+        {status && <p className="font-bold">{status}</p>}
+        {caption && <p>Heard: “{caption.heard}”</p>}
+        {caption?.reply && <p>{caption.reply}</p>}
+        {voice.error && <p className="text-danger">{voice.error}</p>}
+      </div>
+    </div>
+  );
 
   return (
     <div
@@ -393,12 +421,13 @@ export default function Map() {
       </MapContainer>
 
       {/* ---- Top: search + ride type (planning) or the next-turn banner (navigating) ---- */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col gap-2 p-4">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col gap-2 px-4 pt-[max(8px,env(safe-area-inset-top))]">
         {!nav && (
           <>
             <div className="relative">
               <div className="pointer-events-auto flex h-12 items-center gap-2 rounded-full bg-card pl-4 pr-1 shadow-md">
                 <Search className="size-5 shrink-0 text-muted-foreground" />
+                {/* 16px text: smaller makes iPhones zoom in on the page when you tap the box */}
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)} // Keep state in sync
@@ -416,6 +445,15 @@ export default function Map() {
                     <X className="size-5" />
                   </button>
                 )}
+                <button
+                  {...micProps}
+                  className={`relative flex size-10 shrink-0 touch-none select-none items-center justify-center rounded-full ${
+                    voice.mode !== "off" ? "bg-primary text-primary-foreground" : "text-primary"
+                  }`}
+                >
+                  {micPing}
+                  <Mic className="relative size-5" />
+                </button>
               </div>
               {/* Suggestions as you type */}
               {query.length >= 2 && results.length > 0 && (
@@ -434,39 +472,50 @@ export default function Map() {
                 </ul>
               )}
             </div>
-            {/* Ride type chips: only choose the type, the route starts with "Start" */}
-            <div className="flex gap-2">{profileButtons(setProfile)}</div>
+            {/* Ride type chips (only choose the type: the route starts with "Start"), theme on the right */}
+            <div className="flex items-center gap-2">
+              {profileButtons(setProfile)}
+              <button
+                onClick={toggleTheme}
+                aria-label={theme === "dark" ? "Switch to light map" : "Switch to dark map"}
+                title={theme === "dark" ? "Light map" : "Dark map"}
+                className={`${FAB} ml-auto`}
+              >
+                {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
+              </button>
+            </div>
+            {voiceBubble}
           </>
         )}
 
         {nav && (
           <div className="pointer-events-auto overflow-hidden rounded-2xl shadow-md">
             {/* Current instruction */}
-            <div className="flex items-start gap-4 bg-primary p-4 text-primary-foreground">
-              <StepIcon className="mt-1 size-10 shrink-0" strokeWidth={2.5} />
+            <div className="flex items-start gap-4 bg-primary px-4 py-2 text-primary-foreground">
+              <StepIcon className="mt-1 size-8 shrink-0" strokeWidth={2.5} />
               <p className="text-[28px] font-bold leading-tight">{step?.text}</p>
             </div>
             {/* What comes after it */}
-            <div className="flex items-center gap-2 bg-card px-4 py-2 text-base text-foreground">
+            <div className="flex items-center gap-2 bg-card px-4 py-2 text-sm text-foreground">
               <span>Then</span>
-              <NextIcon className="size-5 shrink-0" />
+              <NextIcon className="size-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{next?.text ?? "arrive"}</span>
               {toNext !== null && <span className="shrink-0">in {fmt(toNext)}</span>}
             </div>
           </div>
         )}
 
-        {/* Right-hand map buttons, under the search bar or the banner */}
-        <div className="flex flex-col items-end gap-2">
-          <button
-            onClick={toggleTheme}
-            aria-label={theme === "dark" ? "Switch to light map" : "Switch to dark map"}
-            title={theme === "dark" ? "Light map" : "Dark map"}
-            className={FAB}
-          >
-            {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
-          </button>
-          {nav && (
+        {/* Right-hand map buttons under the banner while navigating */}
+        {nav && (
+          <div className="flex flex-col items-end gap-2">
+            <button
+              onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Switch to light map" : "Switch to dark map"}
+              title={theme === "dark" ? "Light map" : "Dark map"}
+              className={FAB}
+            >
+              {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
+            </button>
             <button
               onClick={() => setVoiceOn((v) => !v)} // Click = user gesture, so the browser allows audio
               aria-label={voiceOn ? "Mute directions" : "Speak directions"}
@@ -474,46 +523,32 @@ export default function Map() {
             >
               {voiceOn ? <Volume2 className="size-5" /> : <VolumeX className="size-5" />}
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* ---- Bottom: attribution, mic, my location, then the sheet ---- */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1000] flex flex-col gap-2">
-        {/* What the voice command is doing right now */}
-        {(status || caption || voice.error) && (
-          <div className="flex justify-center px-4">
-            <div aria-live="polite" className="max-w-sm rounded-2xl bg-card px-4 py-2 text-base text-foreground shadow-md">
-              {status && <p className="font-semibold">{status}</p>}
-              {caption && <p className="text-sm">Heard: “{caption.heard}”</p>}
-              {caption?.reply && <p>{caption.reply}</p>}
-              {voice.error && <p className="text-danger">{voice.error}</p>}
-            </div>
-          </div>
-        )}
-        <div className="relative flex min-h-[72px] items-end justify-between px-4">
-          <p className="pointer-events-auto max-w-[35%] rounded-lg bg-card/90 px-2 py-1 text-xs leading-snug text-foreground">
+        {nav && voiceBubble}
+        <div className={`relative flex items-end justify-between px-4 ${nav ? "min-h-[72px]" : ""}`}>
+          <p
+            className={`pointer-events-auto rounded-md bg-card/90 px-2 py-0.5 text-[10px] leading-tight text-foreground ${
+              nav ? "max-w-[calc(50%-52px)]" : "whitespace-nowrap" // wraps beside the big mic while riding
+            }`}
+          >
             &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline">OpenStreetMap</a>{" "}
             contributors
           </p>
-          {/* Mic: hold and speak ("chill ride to the Bodleian"), or tap once to keep listening */}
-          <button
-            onPointerDown={(e) => {
-              e.currentTarget.setPointerCapture(e.pointerId); // still "held" if the finger slides off
-              voice.press();
-            }}
-            onPointerUp={voice.release}
-            onPointerCancel={voice.release}
-            onContextMenu={(e) => e.preventDefault()} // no long-press menu on phones
-            aria-label="Speak a command"
-            aria-pressed={voice.mode !== "off"}
-            className="pointer-events-auto absolute bottom-0 left-1/2 flex size-[72px] -translate-x-1/2 touch-none select-none items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md"
-          >
-            {voice.mode !== "off" && (
-              <span className="absolute inset-0 animate-ping rounded-full bg-primary opacity-50" />
-            )}
-            <Mic className="relative size-8" />
-          </button>
+          {/* While riding: the big 72px mic (planning has it in the search bar) */}
+          {nav && (
+            <button
+              {...micProps}
+              className="pointer-events-auto absolute bottom-0 left-1/2 flex size-[72px] -translate-x-1/2 touch-none select-none items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md"
+            >
+              {micPing}
+              <Mic className="relative size-8" />
+            </button>
+          )}
           <button
             onClick={() => userPos && map?.flyTo(userPos, 16)} // Back to the blue dot
             disabled={!userPos}
@@ -528,17 +563,16 @@ export default function Map() {
           <div className="mx-auto mb-2 h-1 w-8 rounded-full bg-border" /> {/* sheet handle */}
 
           {!nav && !targetPos && (
-            <div className="pb-2">
-              <p className="text-xl font-bold">Where to?</p>
-              <p className="text-base">Search, tap the map, or press the mic and say where.</p>
-            </div>
+            <p className="pb-2 text-sm">
+              <span className="font-bold">Where to?</span> Search, tap the map, or hold the mic and say it.
+            </p>
           )}
 
           {!nav && targetPos && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
               <div>
-                <p className="truncate text-xl font-bold">{targetName ?? "Dropped pin"}</p>
-                <p className="text-base">
+                <p className="truncate text-lg font-bold">{targetName ?? "Dropped pin"}</p>
+                <p className="text-sm">
                   {userPos ? `${profile[0].toUpperCase()}${profile.slice(1)} ride from your location` : "Finding your location…"}
                 </p>
               </div>
@@ -566,7 +600,7 @@ export default function Map() {
           )}
 
           {nav && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
               <div className="flex items-center gap-4">
                 <button
                   onClick={() => setNav(null)}
@@ -576,8 +610,8 @@ export default function Map() {
                   <X className="size-6" />
                 </button>
                 <div className="min-w-0 flex-1 text-center">
-                  <p className="text-[28px] font-bold leading-tight">{Math.max(1, Math.round(secs / 60))} min</p>
-                  <p className="text-base">
+                  <p className="text-2xl font-bold leading-tight">{Math.max(1, Math.round(secs / 60))} min</p>
+                  <p className="text-sm">
                     {fmt(left)} · arrive {eta}
                   </p>
                 </div>
@@ -585,17 +619,17 @@ export default function Map() {
               </div>
               {/* When to leave: only before you've really set off */}
               {hint && (proj?.alongM ?? 0) < 100 && (
-                <p className="flex items-start gap-2 text-base">
-                  <Clock className="mt-0.5 size-5 shrink-0 text-warning" />
+                <p className="flex items-start gap-2 text-sm">
+                  <Clock className="size-5 shrink-0 text-warning" />
                   {hint}
                 </p>
               )}
               {/* Change ride type mid-ride: re-plans from where the user is now */}
-              <div className="flex gap-2">
+              <div className="flex gap-2 pt-2">
                 {profileButtons((p) => {
                   setProfile(p);
                   sendPositions(p);
-                })}
+                }, true)}
               </div>
             </div>
           )}

@@ -126,11 +126,12 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /* Card colour behind everything: iPhones show it around the browser bars, next to the sheet */
   body {
-    @apply bg-background text-foreground;
+    @apply bg-card text-foreground;
   }
   html {
-    @apply font-sans;
+    @apply bg-card font-sans;
   }
 }
 
@@ -139,6 +140,24 @@
   .map-loading {
     background: var(--ef-dark-bg);
   }
+  html:not(.light),
+  html:not(.light) body {
+    background: var(--ef-dark-card);
+  }
+}
+
+/* A 48px tap area for controls drawn smaller than that */
+.tap-48 {
+  position: relative;
+}
+.tap-48::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 48px);
+  height: max(100%, 48px);
+  transform: translate(-50%, -50%);
 }
 
 /* --- Leaflet ------------------------------------------------------------------------- */

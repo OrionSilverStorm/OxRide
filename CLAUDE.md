@@ -257,10 +257,11 @@ Follow the phone's setting by default. Switch to dark automatically from sunset 
 - Bottom sheet for planning. A banner at the top for the next turn while navigating.
 - Rounded corners (rounded-2xl on cards), one soft shadow level, 8px spacing grid.
 - Font: Inter. Next-turn text is 28 to 32px bold, secondary text 14 to 16px.
-- Every button is at least 48px tall. The push-to-talk button is 72px and centred, and it pulses while listening.
+- Every button has a tap area of at least 48px (map buttons and ride-type chips are drawn at 36 to 40px with a 48px tap area, `.tap-48`). While navigating the push-to-talk button is 72px and centred; while planning it sits in the search bar, as in Google Maps. It pulses while listening.
 - Route line is 6px in the primary colour with a thin outline in the background colour. Alternative routes are muted grey.
 - Charts use one colour with no gridlines. The best departure slot is highlighted in the warning colour.
-- Map tiles: a light CARTO basemap in the light palette and CARTO Dark Matter in the dark palette. Keep the OpenStreetMap attribution visible.
+- Map tiles: OpenStreetMap in both palettes, darkened with a CSS filter (`.tiles-dark`) in the dark one (CARTO's tiles now need an API key). Keep the OpenStreetMap attribution visible.
+- iPhones: the page behind the map is the card colour of the current palette (`<html>` gets the theme class), so no light strips show around Safari's bars.
 
 ### Rules
 - Text must keep a readable contrast against its background in direct sunlight. Do not put muted text on a raised surface.
