@@ -126,12 +126,16 @@ def test_speak_endpoint_needs_text(client):
 class FakeGemini:
     reply = {"action": "answer", "settings": {}, "reply": "About ten minutes."}
     calls = []
+    failing = {}  # model name -> error to raise
 
-    def __init__(self, api_key):
+    def __init__(self, api_key, http_options=None):
+        self.http_options = http_options
         self.models = types.SimpleNamespace(generate_content=self.generate_content)
 
     def generate_content(self, *, model, contents, config):
         FakeGemini.calls.append({"model": model, "contents": contents, "config": config})
+        if model in FakeGemini.failing:
+            raise FakeGemini.failing[model]
         return types.SimpleNamespace(text=json.dumps(FakeGemini.reply))
 
 
@@ -139,7 +143,9 @@ class FakeGemini:
 def fake_gemini(monkeypatch):
     from google import genai
     FakeGemini.calls = []
+    FakeGemini.failing = {}
     FakeGemini.reply = {"action": "answer", "settings": {}, "reply": "About ten minutes."}
+    monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "backup-a,backup-b")
     monkeypatch.setattr(genai, "Client", FakeGemini)
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setenv("GEMINI_MODEL", "gemini-test-flash")
@@ -179,11 +185,48 @@ def test_falls_back_when_a_model_rejects_the_thinking_setting(fake_gemini, monke
 
     def picky(self, *, model, contents, config):
         if config.thinking_config is not None:
-            raise RuntimeError("thinking_level is not supported for this model")
+            raise RuntimeError("400 INVALID_ARGUMENT: thinking level not supported")
         return real(self, model=model, contents=contents, config=config)
     monkeypatch.setattr(fake_gemini, "generate_content", picky)
     monkeypatch.setenv("GEMINI_MODEL", "gemini-3.8-flash")
-    assert ai.interpret_voice(None, "hi", None, None)["reply"] == "About ten minutes."
+    report = {}
+    assert ai.interpret_voice(None, "hi", None, None, report=report)["reply"] == "About ten minutes."
+    assert report["model"] == "gemini-3.8-flash" and "rejected" in report["thinking"]
+
+
+def test_overloaded_model_falls_back_to_the_next(fake_gemini):
+    fake_gemini.failing = {"gemini-test-flash": RuntimeError("503 UNAVAILABLE high demand"),
+                           "backup-a": RuntimeError("429 RESOURCE_EXHAUSTED quota")}
+    report = {}
+    assert ai.interpret_voice(None, "hi", None, None, report=report)["reply"] == "About ten minutes."
+    assert report["model"] == "backup-b"
+    assert [c["model"] for c in fake_gemini.calls] == ["gemini-test-flash", "backup-a", "backup-b"]
+    assert len(report["errors"]) == 2
+
+
+def test_all_models_failing_is_an_error(fake_gemini):
+    fake_gemini.failing = {m: RuntimeError("503 UNAVAILABLE") for m in ("gemini-test-flash", "backup-a", "backup-b")}
+    with pytest.raises(RuntimeError, match="backup-b"):
+        ai.interpret_voice(None, "hi", None, None)
+
+
+def test_each_attempt_has_a_time_limit(fake_gemini, monkeypatch):
+    seen = {}
+    real_init = fake_gemini.__init__
+
+    def spy(self, api_key, http_options=None):
+        seen["timeout"] = http_options.timeout
+        real_init(self, api_key, http_options)
+    monkeypatch.setattr(fake_gemini, "__init__", spy)
+    ai.interpret_voice(None, "hi", None, None)
+    assert seen["timeout"] == ai.ATTEMPT_TIMEOUT_MS <= 10_000
+
+
+def test_model_list_order_and_no_repeats(monkeypatch):
+    monkeypatch.setenv("GEMINI_MODEL", "main")
+    monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "b, main ,c")
+    assert ai.gemini_models() == ["main", "b", "c"]
+    assert ai.gemini_models("only-this") == ["only-this"]
 
 
 def test_interpret_voice_text_fallback(fake_gemini):
@@ -193,6 +236,7 @@ def test_interpret_voice_text_fallback(fake_gemini):
 
 def test_interpret_voice_needs_a_model(fake_gemini, monkeypatch):
     monkeypatch.delenv("GEMINI_MODEL")
+    monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "")
     with pytest.raises(RuntimeError, match="GEMINI_MODEL"):
         ai.interpret_voice(None, "hi", None, None)
 

@@ -111,6 +111,22 @@ def route_summary(route: dict | None) -> dict | None:
     }
 
 
+# If GEMINI_MODEL is overloaded (503), out of free quota (429) or slow, try these next.
+# Picked with /debug/gemini-speed: both answered a voice command in under 2 s.
+DEFAULT_FALLBACK_MODELS = "gemini-flash-lite-latest,gemini-3-flash-preview"
+ATTEMPT_TIMEOUT_MS = 10_000  # per model: a rider can't wait longer
+
+
+def gemini_models(override: str | None = None) -> list[str]:
+    """Models to try, in order: GEMINI_MODEL, then GEMINI_FALLBACK_MODELS."""
+    if override:
+        return [override]
+    first = os.environ.get("GEMINI_MODEL") or ""
+    rest = os.environ.get("GEMINI_FALLBACK_MODELS", DEFAULT_FALLBACK_MODELS)
+    models = [m.strip() for m in [first, *rest.split(",")] if m.strip()]
+    return list(dict.fromkeys(models))  # no repeats, order kept
+
+
 def thinking_for(model: str):
     """Keep Gemini's "thinking" short: a rider waits for the answer (default thinking took ~75 s)."""
     from google.genai import types
@@ -133,8 +149,8 @@ def interpret_voice(audio: bytes | None, text: str | None,
     from google import genai
     from google.genai import types
 
-    model = model or os.environ.get("GEMINI_MODEL")
-    if not model:
+    models = gemini_models(model)
+    if not models:
         raise RuntimeError("GEMINI_MODEL is not set (pick one with the Gemini test on /debug)")
     context = {"time_now": datetime.now(London).strftime("%A %Y-%m-%d %H:%M"),
                "rider_position": position, "current_route": route_summary(route)}
@@ -144,23 +160,37 @@ def interpret_voice(audio: bytes | None, text: str | None,
     else:
         parts.append(f"The rider said: {text}")
 
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"],
+                          http_options=types.HttpOptions(timeout=ATTEMPT_TIMEOUT_MS))
+    report = report if report is not None else {}
 
-    def ask(thinking):
+    def ask(name, thinking):
         return client.models.generate_content(
-            model=model, contents=parts,
+            model=name, contents=parts,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM, temperature=0.3, thinking_config=thinking,
                 response_mime_type="application/json", response_json_schema=SCHEMA))
 
-    report = report if report is not None else {}
-    report["model"] = model
-    try:
-        resp = ask(thinking_for(model))
-        report["thinking"] = "short" if thinking_for(model) is not None else "model default"
-    except Exception as e:
-        report["thinking"] = f"model default (short thinking rejected: {str(e)[:150]})"
-        resp = ask(None)  # this model doesn't take that thinking setting: use its default
+    errors = []
+    for name in models:
+        thinking = thinking_for(name)
+        try:
+            try:
+                resp = ask(name, thinking)
+                report["thinking"] = "short" if thinking is not None else "model default"
+            except Exception as e:
+                if thinking is None or "INVALID_ARGUMENT" not in str(e):
+                    raise
+                report["thinking"] = "model default (short thinking rejected)"
+                resp = ask(name, None)  # this model doesn't take that setting
+            report["model"] = name
+            break
+        except Exception as e:  # overloaded, out of quota, too slow, unknown model: try the next one
+            errors.append(f"{name}: {type(e).__name__}: {str(e)[:120]}")
+    else:
+        report["errors"] = errors
+        raise RuntimeError(" | ".join(errors))
+    report["errors"] = errors  # models that failed before one answered
     result = json.loads(resp.text)
     if result.get("action") not in ("new_route", "reroute", "answer"):
         result["action"] = "answer"

@@ -289,8 +289,10 @@ export default function Map() {
 
   //************************************************************************************* */ gemini api voice listen
   // A spoken command, from the mic button or after "Hey OxRide"
+  const [voiceStatus, setVoiceStatus] = useState<"" | "Listening…" | "Thinking…">(""); // Shown next to the mic
   const handleCommand = async (text: string) => {
     let r;
+    setVoiceStatus("Thinking…");
     try {
       // Gemini (via /voice) works out the place and ride type, and finds the place's coordinates
       r = await sendVoice({
@@ -301,6 +303,8 @@ export default function Map() {
     } catch {
       say("Sorry, I couldn't reach OxRide.");
       return;
+    } finally {
+      setVoiceStatus("");
     }
     say(r.reply); // Spoken reply (ElevenLabs): the user just asked, so it's not muted
     const p = (r.settings.profile as Profile | undefined) ?? profile;
@@ -326,6 +330,10 @@ export default function Map() {
     const rec = new SR();
     rec.lang = "en-GB";
     rec.onresult = (e) => handleRef.current(e.results[0][0].transcript); // What the user said
+    // Heard nothing (or an error): stop showing "Listening…" (a result already switched it to "Thinking…")
+    rec.onend = () => setVoiceStatus((s) => (s === "Listening…" ? "" : s));
+    rec.onerror = () => setVoiceStatus((s) => (s === "Listening…" ? "" : s));
+    setVoiceStatus("Listening…");
     rec.start(); // Starts listening
   };
 
@@ -355,6 +363,8 @@ export default function Map() {
         else {
           beep();
           waitUntil = Date.now() + 8000;
+          setVoiceStatus("Listening…"); // Waiting for the command after "Hey OxRide"
+          setTimeout(() => setVoiceStatus((s) => (s === "Listening…" ? "" : s)), 8000);
         }
       }
     };
@@ -579,6 +589,17 @@ export default function Map() {
       >
         <Mic className="size-5" />
       </button>
+      {/* What the voice command is doing right now */}
+      {voiceStatus && (
+        <div
+          aria-live="polite"
+          className={`absolute left-16 z-[1000] rounded-full bg-neutral-900 px-3 py-2 text-sm text-white shadow ${
+            nav ? "bottom-56" : "bottom-36"
+          }`}
+        >
+          {voiceStatus}
+        </div>
+      )}
       <button
         onClick={() => {
           if (!handsFree && !speechRecognition()) return alert("Speech recognition not supported");
