@@ -77,7 +77,7 @@ def test_gradient_bands(grade, effect):
 
 @pytest.mark.parametrize("wind,bearing,effect", [
     (7, 0, -0.014), (5, 0, -0.010), (3.5, 0, -0.005), (2.5, 0, -0.003), (1.5, 0, -0.002), (0.5, 0, 0.0),
-    (7, 180, 0.017), (5, 180, 0.012), (3.5, 180, 0.006), (1.5, 180, 0.003), (0.5, 180, 0.0),
+    (7, 180, 0.017), (5, 180, 0.012), (3.5, 180, 0.006), (2.5, 180, 0.007), (1.5, 180, 0.003), (0.5, 180, 0.0),
 ])
 def test_wind_bands(wind, bearing, effect):
     # wind from the north (0°): riding north (0°) is a headwind, south (180°) a tailwind

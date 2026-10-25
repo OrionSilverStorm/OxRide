@@ -1,6 +1,6 @@
 # OxRide
 
-Time-aware, voice-first cycle navigation for Oxford, built for a hackathon (theme: TIME). Google Maps gives the shortest route for cars; OxRide gives the best route for a cyclist at the time they ride: it accounts for hills, wind and temperature, prefers cycle paths and quiet streets over main roads, and reroutes when you go off route. You can't type while cycling, so you talk to it: Gemini works out what you want and ElevenLabs speaks the answer and the directions. Web app / PWA, mobile first.
+Time-aware, voice-first cycle navigation for Oxford, built for a hackathon (theme: TIME). Google Maps gives the shortest route for cars; OxRide gives the best route for a cyclist at the time they ride: it accounts for hills and the time of day (darkness, rush hour), prefers cycle paths and quiet streets over main roads, and reroutes when you go off route. You can't type while cycling, so you talk to it: Gemini works out what you want and ElevenLabs speaks the answer and the directions. Web app / PWA, mobile first.
 
 ## Challenges we're entering
 
@@ -17,7 +17,7 @@ Time-aware, voice-first cycle navigation for Oxford, built for a hackathon (them
 - **Must have (this is the demo):** our own A* finds a sensible cycle route between two points in Oxford; the route is drawn on a live, deployed map; the same trip gives a different route at night than by day because of lit streets.
 - **Should have:** navigation mode (live location, spoken turn-by-turn, simulate ride); rerouting when off route; PWA on a phone; ETA prediction and best time to leave; rush hour and the three profiles; place search and "use my location"; push-to-talk with Gemini (new route, reroute, question) and ElevenLabs replies.
 - **Nice to have:** ElevenLabs voice with browser voice as fallback; Tiger Data storing weather and predictions; suffer score with a dragon that gets angrier the more you climb.
-- **Dream:** rerouting for blocked roads; wind and rain affecting the route itself.
+- **Dream:** rerouting for blocked roads.
 
 If we fall behind, cut from the bottom up (nice to have first, e.g. Tiger Data, then ElevenLabs since the browser voice still works). Never cut the route on the map and the day/night switch.
 
@@ -207,8 +207,9 @@ What it is: a small hint, not the main feature. The route is always planned for 
 
 ## Route behaviour
 
+- Wind does not change the route: measured data (TU Delft) shows it changes cycling speed by under 2%, so it only affects the ETA.
 - Profiles: `fast`, `regular`, `chill` (same names in the UI, API and code). Each profile is a different set of cost factors in `routing.PROFILES`: chill = cycle paths and quiet roads even if longer, regular = prefers cycle paths and avoids repeated climbs, fast = mostly the shortest route.
-- The route depends on departure time: darkness (prefer lit streets), rush hour (quiet roads over main roads), wind and rain, temperature, hills (suffer score), and Oxford-specific cycling restrictions (avoid Cornmarket and Queen Street during restricted hours).
+- The route depends on departure time: darkness (prefer lit streets), rush hour (quiet roads over main roads), rain (slippery gravel), hills (suffer score), and Oxford-specific cycling restrictions (avoid Cornmarket and Queen Street during restricted hours).
 
 ## Design system: Everforest
 

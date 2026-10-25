@@ -168,13 +168,14 @@ def time_penalty(edge, ctx):
     return p
 
 # --- Speed model --------------------------------------------------------------------
-# Measured effects on real cycling speed (the team's speed table), applied to a flat
-# asphalt base speed. Each table is (lower bound, effect) from the biggest bound down.
+# Measured effects on real cycling speed, applied to a flat asphalt base speed.
+# Source: cycling speed research from TU Delft (Netherlands), as collected by the team.
+# Each table is (lower bound, effect) from the biggest bound down.
 
 BASE_SPEED = 15 * 0.44704  # 15 mph on flat asphalt with no wind
 
 # along-the-road wind in m/s (forecast wind x cos of the angle to the road)
-TAILWIND = [(6, 0.017), (4, 0.012), (3, 0.006), (1, 0.003), (0, 0.0)]  # 2-3 m/s not in the table: uses 1-2's
+TAILWIND = [(6, 0.017), (4, 0.012), (3, 0.006), (2, 0.007), (1, 0.003), (0, 0.0)]
 HEADWIND = [(6, -0.014), (4, -0.010), (3, -0.005), (2, -0.003), (1, -0.002), (0, 0.0)]
 
 # gradient as a fraction (0.04 = 4%)
