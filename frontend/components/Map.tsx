@@ -106,14 +106,14 @@ export default function Map() {
   };
 
   // Routing
-  const sendPositions = async () => {
+  const sendPositions = async (p: Profile = profile) => {
     if (!userPos || !targetPos) return; // Need both points
     let data;
     try {
       data = await getRoute({
         start: [userPos.lat, userPos.lng], // [lat, lon], latitude first
         end: [targetPos.lat, targetPos.lng], // [lat, lon], latitude first
-        profile: profile, // "fast" | "regular" | "chill"
+        profile: p, // "fast" | "regular" | "chill"
         // depart_at left out = leaving now
       });
     } catch (e) {
@@ -250,7 +250,10 @@ export default function Map() {
             ) => (
               <button
                 key={p} // React needs a unique key per item in a list
-                onClick={() => setProfile(p)} // Clicking saves this ride type into state
+                onClick={() => {
+                  setProfile(p); // Highlight the selected ride type
+                  sendPositions(p); // Reroute now with the new type (returns early if a pin is missing)
+                }}
                 className={`flex-1 rounded px-2 py-1 text-sm capitalize shadow ${
                   // flex-1: equal widths; capitalize: "chill" shows as "Chill"
                   profile === p ? "bg-blue-600 text-white" : "bg-white" // Active one is blue, the rest are white
@@ -266,7 +269,7 @@ export default function Map() {
       {/* Button inside the wrapper div, outside <MapContainer> */}
       {/*z-[1000] sits above Leaflet's panes */}
       <button
-        onClick={sendPositions}
+        onClick={() => sendPositions()}
         className="absolute bottom-4 left-1/2 z-[1000] -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
         disabled={!userPos || !targetPos}
       >
