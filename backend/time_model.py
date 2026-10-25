@@ -8,7 +8,7 @@ London = ZoneInfo("Europe/London")
 Oxford = (51.7520, -1.2577)
 hourly_vars = "wind_speed_10m,wind_direction_10m,precipitation_probability,precipitation,is_day,temperature_2m"
 CACHE_MINUTES = 30  # fetch a fresh forecast at most this often
-wind_at_rider = 0.5
+wind_at_rider = 1.0  # the speed table uses forecast wind speeds directly
 
 
 def fetch_weather():
@@ -54,7 +54,8 @@ def _refresh_weather():
     except Exception as e:
         print(f"WARNING: weather fetch failed ({e!r})")
         if _weather_cache is not None:
-            _weather_source = "open-meteo (old)"
+            if _weather_source == "open-meteo":
+                _weather_source = "open-meteo (old)"
         else:
             with open(SNAPSHOT) as f:
                 _weather_cache = json.load(f)
@@ -82,11 +83,16 @@ def get_context(when, weekday_override=None):
         minute=0, second=0, microsecond=0
     )
 
-    # Find the matching forecast hour
-    i = min(
-        range(len(times)),
-        key=lambda j: abs((times[j] - utc_hour).total_seconds())
-    )
+    # Find the matching forecast hour (same hour of day if t is outside the forecast)
+    def row(t):
+        return min(
+            range(len(times)),
+            key=lambda j: (times[j].hour != t.hour, abs((times[j] - t).total_seconds()))
+        )
+
+    i = row(utc_hour)
+    # Rain values are totals for the hour before their timestamp
+    r = row(utc_hour + timedelta(hours=1))
 
     local = when.astimezone(London)
 
@@ -106,8 +112,8 @@ def get_context(when, weekday_override=None):
     return {
         "wind_ms": hourly["wind_speed_10m"][i] or 0,
         "wind_from_deg": hourly["wind_direction_10m"][i] or 0,
-        "rain_prob": (hourly["precipitation_probability"][i] or 0) / 100,
-        "rain_mm": hourly["precipitation"][i] or 0,
+        "rain_prob": (hourly["precipitation_probability"][r] or 0) / 100,
+        "rain_mm": hourly["precipitation"][r] or 0,
         "dark": hourly["is_day"][i] == 0,
         "rush": rush,
         "temperature_c": (hourly.get("temperature_2m") or [None] * len(times))[i],
@@ -129,7 +135,7 @@ def headwind(bearing, ctx):
 
 
 def time_penalty(edge, ctx):
-    p = 1.0
+    p = 1.0 
 
     def first(v):
         if isinstance(v, list):
@@ -141,9 +147,14 @@ def time_penalty(edge, ctx):
     bearing = first(edge.get("bearing"))
     lit = first(edge.get("lit"))
 
-    #darkness penalty: lit is True/False in the graph (build_graph fills gaps by road type)
-    if ctx.get("dark") and not lit:
-        p *= 1.6
+    #darkness penalty
+    if ctx["dark"]:
+        if lit is False or lit == "no":
+            p *=1.6
+        elif lit is True or lit == "yes":
+            pass
+        else:
+            p *= 1.2
 
 
     #Rush hour penalty
@@ -163,93 +174,97 @@ def time_penalty(edge, ctx):
     hw = headwind(bearing, ctx)
 
     if hw > 0:
-        p *= 1 + 0.03 * hw
+        p /= 1 + _band(HEADWIND, hw)  # e.g. 6+ m/s headwind = 1.4% slower = 1.4% more cost
 
     return p
 
-MASS = 85.0       # Rider + bicycle mass (kg)
-G = 9.81          # Gravitational acceleration
-RHO = 1.225       # Air density
-MAX_SPEED = 15 * 0.44704  # 15 mph: what Lime/Voi e-bikes are limited to in the UK
-SPEED_SCALE = 1.0
+# --- Speed model --------------------------------------------------------------------
+# Measured effects on real cycling speed, applied to a flat asphalt base speed.
+# Source: cycling speed research from TU Delft (Netherlands), as collected by the team.
+# Each table is (lower bound, effect) from the biggest bound down.
 
-# One rider for every profile: fast/regular/chill only change which roads the route
-# uses, not how fast you ride. 160 W would do ~18 mph on the flat, so the 15 mph cap
-# sets the flat speed; hills and headwind slow you down from there.
-RIDER = {
-    "power": 160,
-    "cda": 0.32,
-    "crr": 0.005
-}
+BASE_SPEED = 15 * 0.44704  # 15 mph on flat asphalt with no wind
 
-def power_needed(v, grade, head, pr):
-    theta = math.atan(grade or 0.0)
+# along-the-road wind in m/s (forecast wind x cos of the angle to the road)
+TAILWIND = [(6, 0.017), (4, 0.012), (3, 0.006), (2, 0.007), (1, 0.003), (0, 0.0)]
+HEADWIND = [(6, -0.014), (4, -0.010), (3, -0.005), (2, -0.003), (1, -0.002), (0, 0.0)]
 
-    gravity = MASS * G * math.sin(theta)
+# gradient as a fraction (0.04 = 4%)
+UPHILL = [(0.04, -0.16), (0.03, -0.12), (0.02, -0.08), (0.01, -0.05), (0.005, -0.03), (0, 0.0)]
+DOWNHILL = [(0.02, 0.06), (0.01, 0.05), (0.005, 0.03), (0, 0.0)]
 
-    rolling = MASS * G * pr["crr"] * math.cos(theta)
+# The graph has 3 surface groups; each value is the length-weighted mix of what
+# that group really is in Oxford's OSM data:
+#   cobbles: 68% paving stones (-4%), ~12% setts/cobblestones (-20%), rest asphalt
+#   gravel:  grass, dirt, ground, unpaved (-21%) and 15% compacted (-7%)
+SURFACE = {"asphalt": 0.0, "cobbles": -0.05, "gravel": -0.19}
 
-    air = (
-        0.5 * RHO * pr["cda"]
-        * max(v + head, 0) ** 2
-    )
-
-    return (gravity + rolling + air) * v
-
-def speed_ms(grade, head):
-    pr = RIDER
-
-    low = 0.5
-    high = 25.0
-
-    for _ in range(40):
-        mid = (low + high) / 2
-
-        required = power_needed(
-            mid, grade, head, pr
-        )
-
-        if required > pr["power"]:
-            high = mid
-        else:
-            low = mid
-
-    speed = (low + high) / 2
-
-    return min(speed, MAX_SPEED) * SPEED_SCALE
+SIDE_STREETS = {"residential", "living_street", "service", "unclassified"}
+SHARED_PATHS = {"path", "footway", "pedestrian", "bridleway"}
 
 
+def _band(table, x):
+    for bound, effect in table:
+        if x >= bound:
+            return effect
+    return 0.0
+
+
+def _first(v):
+    return v[0] if isinstance(v, list) and v else v
+
+
+def wind_effect(bearing, ctx):
+    along = headwind(bearing, ctx)  # m/s; positive = into the wind
+    return _band(HEADWIND, along) if along > 0 else _band(TAILWIND, -along)
+
+
+def grade_effect(grade):
+    grade = grade or 0.0
+    return _band(UPHILL, grade) if grade > 0 else _band(DOWNHILL, -grade)
+
+
+def infra_effect(edge):
+    # cycle infrastructure (from the OSM highway and cycleway tags)
+    highway = _first(edge.get("highway"))
+    cycleway = edge.get("cycleway")
+    cycleway = set(cycleway) if isinstance(cycleway, list) else {cycleway}
+    if highway == "cycleway":
+        return -0.01  # separate cycle track
+    if highway in SHARED_PATHS:
+        return 0.01   # shared foot/cycle path
+    if cycleway & {"lane", "opposite_lane"}:
+        return 0.02   # painted cycle lane
+    if cycleway & {"share_busway", "opposite_share_busway"}:
+        return 0.01   # shared bus lane
+    if cycleway & {"track", "opposite_track", "separate"}:
+        return 0.0    # road with a cycle track
+    if highway in SIDE_STREETS:
+        return -0.05  # side street with nothing for bikes
+    return 0.0        # normal road
+
+
+def speed_factor(edge, ctx):
+    # How much faster (>1) or slower (<1) than BASE_SPEED this road is right now.
+    # Rain: no effect on speed in the measurements.
+    f = 1.0
+    f *= 1 + wind_effect(edge.get("bearing"), ctx)
+    f *= 1 + grade_effect(edge.get("grade"))
+    f *= 1 + SURFACE.get(_first(edge.get("surface")), 0.0)
+    f *= 1 + infra_effect(edge)
+    return f
+
+
+def speed_ms(edge, ctx):
+    return BASE_SPEED * speed_factor(edge, ctx)
 
 
 def eta_minutes(edges, ctx):
     total_seconds = 0.0
-
     for edge in edges:
-        length = edge["length"]
-        grade = edge.get("grade") or 0.0
-        bearing = edge.get("bearing")
-
-        # Calculate headwind for this road
-        head = headwind(bearing, ctx)
-
-        # Predict cycling speed
-        speed = speed_ms(grade, head)
-
-        # Rain reduces speed by 10%
-        if ctx["rain_mm"] > 0:
-            speed *= 0.9
-
-        # Avoid division by zero
-        speed = max(speed, 0.5)
-
-        # Time for road segment
-        time_seconds = length / speed
-
-        # Add junction delay
-        total_seconds += time_seconds + 2
-
+        # time for the road, plus a 2 s allowance for the junction at its end
+        total_seconds += edge["length"] / speed_ms(edge, ctx) + 2
     return total_seconds / 60
-
 
 
 def best_departures(route_fn, profile="regular", now=None, route_id="default"):
@@ -322,6 +337,105 @@ def best_departures(route_fn, profile="regular", now=None, route_id="default"):
     return slots
 
     
+
+# --- "When to leave" hint ------------------------------------------------------------
+# One short line under the ride's distance and arrival time, shown only when leaving
+# now (or a little later) is clearly better, and only for leaving within the next hour.
+# Priority when several apply: rain starts > rain stops > darkness > ice > rush hour.
+
+HINT_WINDOW_MIN = 60   # nobody waits longer than this
+WET_PROB = 0.5         # rain counts as likely from a 50% chance...
+WET_MM = 0.2           # ...or this much rain in the hour
+DRY_PROB = 0.2
+DRY_MM = 0.1
+ICY_C = 2.0            # at or below this, roads may be icy
+RUSH_ENDS = ((9, 30), (18, 30))  # local times when the morning and evening rush end (see get_context)
+
+
+def sun_times(day, lat=Oxford[0], lon=Oxford[1]):
+    """Sunrise and sunset (UTC) on a date. NOAA's formula: within a few minutes, no network."""
+    g = 2 * math.pi / 365 * (day.timetuple().tm_yday - 1)
+    eqtime = 229.18 * (0.000075 + 0.001868 * math.cos(g) - 0.032077 * math.sin(g)
+                       - 0.014615 * math.cos(2 * g) - 0.040849 * math.sin(2 * g))
+    decl = (0.006918 - 0.399912 * math.cos(g) + 0.070257 * math.sin(g) - 0.006758 * math.cos(2 * g)
+            + 0.000907 * math.sin(2 * g) - 0.002697 * math.cos(3 * g) + 0.00148 * math.sin(3 * g))
+    phi = math.radians(lat)
+    cos_ha = math.cos(math.radians(90.833)) / (math.cos(phi) * math.cos(decl)) - math.tan(phi) * math.tan(decl)
+    ha = math.degrees(math.acos(max(-1.0, min(1.0, cos_ha))))
+    midnight = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    sunrise = midnight + timedelta(minutes=720 - 4 * (lon + ha) - eqtime)
+    sunset = midnight + timedelta(minutes=720 - 4 * (lon - ha) - eqtime)
+    return sunrise, sunset
+
+
+def _wet(ctx):
+    return ctx["rain_prob"] >= WET_PROB or ctx["rain_mm"] >= WET_MM
+
+
+def _dry(ctx):
+    return ctx["rain_prob"] < DRY_PROB and ctx["rain_mm"] < DRY_MM
+
+
+def _clock(t):
+    return t.astimezone(London).strftime("%H:%M")
+
+
+def _hour_start(t, now):
+    # The forecast is hourly, so a change in the weather starts on the hour
+    return max(now, t.replace(minute=0, second=0, microsecond=0))
+
+
+def departure_hint(now, eta_min):
+    """The one 'when to leave' line worth showing for a ride of eta_min minutes, or None."""
+    now = now.astimezone(timezone.utc)
+    ride = timedelta(minutes=eta_min)
+    limit = now + timedelta(minutes=HINT_WINDOW_MIN)
+    times = [now + timedelta(minutes=m) for m in range(0, HINT_WINDOW_MIN + 1, 15)]
+    ctxs = [get_context(t) for t in times]
+    here = ctxs[0]
+
+    def hint(kind, text, leave):
+        return {"kind": kind, "text": text, "in_min": round((leave - now).total_seconds() / 60),
+                "leave_at": leave.astimezone(London).isoformat(timespec="minutes")}
+
+    # 1. Rain about to start: dry now and when you'd arrive, wet soon after -> go now
+    if _dry(here) and _dry(get_context(now + ride)):
+        for t, c in zip(times[1:], ctxs[1:]):
+            if _wet(c):
+                return hint("rain_starts", f"Rain from about {_clock(_hour_start(t, now))}. Leave now to arrive dry.", now)
+
+    # 2. Rain about to stop: wet now, dry for the whole ride if you wait a bit
+    if _wet(here):
+        for t, c in zip(times[1:], ctxs[1:]):
+            leave = _hour_start(t, now)
+            if _dry(c) and _dry(get_context(leave + ride)):
+                return hint("rain_stops", f"Rain should stop by about {_clock(leave)}. Leave then to stay dry.", leave)
+
+    # 3. Darkness: arrive before sunset, or wait for sunrise
+    sunrise, sunset = sun_times(now.astimezone(London).date())
+    spare = sunset - ride - now  # how long you can wait and still arrive in daylight
+    if timedelta(minutes=1) <= spare <= timedelta(minutes=HINT_WINDOW_MIN) and now < sunset:
+        return hint("dark_soon", f"Sunset at {_clock(sunset)}. Leave within {int(spare.total_seconds() // 60)} min "
+                                 "to arrive before dark.", now)
+    if now < sunrise <= limit:
+        return hint("light_soon", f"It gets light at {_clock(sunrise)}. Leave then for a daylight ride.", sunrise)
+
+    # 4. Ice: freezing now, above freezing within the hour
+    if here.get("temperature_c") is not None and here["temperature_c"] <= ICY_C:
+        for t, c in zip(times[1:], ctxs[1:]):
+            if c.get("temperature_c") is not None and c["temperature_c"] > ICY_C:
+                leave = _hour_start(t, now)
+                return hint("ice", f"Roads may be icy until about {_clock(leave)}. Leaving then is safer.", leave)
+
+    # 5. Rush hour about to end
+    if here["rush"]:
+        local = now.astimezone(London)
+        for h, m in RUSH_ENDS:
+            end = local.replace(hour=h, minute=m, second=0, microsecond=0)
+            if local < end <= limit:
+                return hint("rush_ends", f"Rush hour ends at {_clock(end)}: quieter roads if you leave then.", end)
+    return None
+
 
 SNAPSHOT = os.path.join(
     os.path.dirname(__file__),

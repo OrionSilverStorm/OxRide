@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -110,9 +110,17 @@ def route(req: RouteRequest) -> dict:
 
     ctx = get_ctx(req.depart_at)
     try:
-        return routing.find_route(req.start, req.end, req.profile, ctx)
+        result = routing.find_route(req.start, req.end, req.profile, ctx)
     except ValueError:
         raise HTTPException(status_code=404, detail="no route found")
+    # "Leave in 20 min: the rain stops" -- only when leaving now, and only if it's worth saying
+    result["hint"] = None
+    if not req.depart_at or req.depart_at == "null":
+        try:
+            result["hint"] = time_model.departure_hint(datetime.now(timezone.utc), result["stats"]["eta_min"])
+        except Exception as e:
+            print(f"WARNING: departure hint failed ({e!r})")
+    return result
 
 @app.post("/navigation")
 def navigation(req: RouteRequest) -> NavigationData:
@@ -170,10 +178,16 @@ def voice(req: VoiceRequest) -> dict:
         result = ai.interpret_voice(audio, req.text, req.position, req.route, req.mime)
     except Exception as e:
         print(f"WARNING: Gemini failed ({e!r})")
-        return {"action": "answer", "settings": {}, "reply": "Sorry, I couldn't understand that. Try again?"}
+        # Plan B: simple commands ("take me to univ", "quieter please") work without Gemini
+        result = ai.simple_command(req.text)
+        if result is None:
+            # "error" is for debugging (curl / Vercel logs); the app only uses action, settings, reply
+            return {"action": "answer", "settings": {}, "reply": "Sorry, I couldn't understand that. Try again?",
+                    "error": f"{type(e).__name__}: {str(e)[:300]}"}
 
     settings = dict(result.get("settings") or {})
     place = settings.pop("destination", None)
+    place = ai.oxford_name(place) or place  # "Univ" -> "University College" for the map search
     if result["action"] == "new_route":
         hits = []
         if place:
@@ -192,13 +206,14 @@ def voice(req: VoiceRequest) -> dict:
 
 
 @app.post("/speak")
-def speak(req: SpeakRequest) -> dict:
-    # ElevenLabs audio as base64 mp3; None tells the browser to use its own voice.
+def speak(req: SpeakRequest) -> Response:
+    # ElevenLabs speech as an mp3 the browser can play directly.
+    # 503 = no audio (ElevenLabs down, out of credits, no key): use the browser's own voice.
     text = req.text.strip()
     if not text:
-        return {"audio": None}
+        raise HTTPException(status_code=422, detail="nothing to say")
     try:
-        return {"audio": base64.b64encode(ai.speak(text[:500])).decode()}
+        return Response(content=ai.speak(text[:500]), media_type="audio/mpeg")
     except Exception as e:
         print(f"WARNING: ElevenLabs failed ({e!r})")
-        return {"audio": None}
+        raise HTTPException(status_code=503, detail="speech is unavailable")

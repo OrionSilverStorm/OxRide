@@ -22,7 +22,15 @@ export const ROUTE_COLORS: Record<DebugRouteId, string> = {
   shortest: "#6b7280",
   google: "#dc2626",
   drawn: "#9333ea",
+  baseline: "#9ca3af",
 };
+
+const riderIcon = L.divIcon({
+  className: "",
+  html: '<div style="width:18px;height:18px;background:#f59e0b;border:3px solid white;border-radius:50%;box-shadow:0 0 6px rgba(0,0,0,.5)"></div>',
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+});
 
 const HIGHWAY_COLORS: Record<string, string> = {
   cycleway: "#16a34a",
@@ -64,6 +72,7 @@ const endIcon = dot("#dc2626", "B");
 const waypointIcon = (i: number) => dot("#9333ea", String(i + 1));
 
 interface Props {
+  rider?: LatLon | null; // the simulated ride's position
   start: LatLon | null;
   end: LatLon | null;
   waypoints: LatLon[];
@@ -123,7 +132,7 @@ function edgeTooltip(e: DebugEdge, i: number) {
 export default function DebugMap(p: Props) {
   const routes = p.result?.routes ?? [];
   // draw ours last so it sits on top
-  const order: DebugRouteId[] = ["shortest", "google", "drawn", "ours"];
+  const order: DebugRouteId[] = ["baseline", "shortest", "google", "drawn", "ours"];
   const sorted = [...routes].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
   const selectedEdge =
     p.selected && routes.find((r) => r.id === p.selected!.route)?.edges[p.selected.idx];
@@ -192,7 +201,7 @@ export default function DebugMap(p: Props) {
                   color: p.colorBy === "route" || isOurs ? color : ROUTE_COLORS[r.id],
                   weight: isOurs ? 6 : 4,
                   opacity: isOurs ? 0.9 : 0.7,
-                  dashArray: r.id === "shortest" ? "8 6" : undefined,
+                  dashArray: r.id === "shortest" ? "8 6" : r.id === "baseline" ? "3 7" : undefined,
                 }}
                 eventHandlers={{ click: () => p.onEdgeClick(r.id, i) }}
               >
@@ -210,6 +219,7 @@ export default function DebugMap(p: Props) {
         />
       )}
 
+      {p.rider && <Marker position={p.rider} icon={riderIcon} zIndexOffset={1000} />}
       {p.start && (
         <Marker
           position={p.start}

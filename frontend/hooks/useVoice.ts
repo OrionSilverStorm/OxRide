@@ -1,96 +1,192 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
-import { sendVoice, type LatLon, type RouteResult, type VoiceResult } from "@/lib/api";
-import { say } from "@/lib/speech";
+// The mic button:
+//   hold   -> listens while held, sends what you said when you let go
+//   tap    -> keeps listening; every sentence is a command; tap again to stop
+// Uses the browser's speech-to-text (Chrome/Safari; needs HTTPS or localhost).
 
-export type VoiceState = "idle" | "listening" | "thinking";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { isSpeaking } from "@/lib/speak";
 
-// Recording formats in order of preference. Chrome/Android: webm. iPhone/Safari: mp4.
-const FORMATS = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+export type VoiceMode = "off" | "hold" | "continuous";
 
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result).split(",")[1] ?? "");
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(blob);
-  });
+const HOLD_MS = 350; // pressed longer than this = hold-to-talk; shorter = a tap
+
+// The bits of the browser's SpeechRecognition API we use
+interface SpeechRec {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onresult:
+    | ((e: {
+        resultIndex: number;
+        results: { length: number; [i: number]: { isFinal: boolean; [j: number]: { transcript: string } } };
+      }) => void)
+    | null;
+  onend: (() => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
 }
 
-/**
- * Push-to-talk: start() records the mic, stop() sends it to /voice, speaks the reply
- * (ElevenLabs, browser voice as fallback) and returns Gemini's {action, settings, reply}.
- * ask(text) does the same from typed text, for browsers without a microphone.
- */
-export function useVoice() {
-  const [state, setState] = useState<VoiceState>("idle");
-  const recorder = useRef<MediaRecorder | null>(null);
-  const chunks = useRef<Blob[]>([]);
-  const supported =
-    typeof window !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined";
+function recognizer(): (new () => SpeechRec) | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as { SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
 
-  const start = useCallback(async () => {
-    if (!supported || recorder.current) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = FORMATS.find((f) => MediaRecorder.isTypeSupported(f));
-      const r = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      chunks.current = [];
-      r.ondataavailable = (e) => e.data.size && chunks.current.push(e.data);
-      r.start();
-      recorder.current = r;
-      setState("listening");
-    } catch {
-      await say("I can't use the microphone. Check the browser's permission.");
-      setState("idle");
-    }
-  }, [supported]);
+const MIC_ERRORS: Record<string, string> = {
+  "not-allowed": "Microphone blocked: allow it in the browser's site settings.",
+  "service-not-allowed": "Speech recognition isn't allowed in this browser.",
+  "audio-capture": "No microphone found.",
+  network: "Speech recognition needs an internet connection.",
+};
 
-  const finish = useCallback(async (body: Parameters<typeof sendVoice>[0]): Promise<VoiceResult | null> => {
-    setState("thinking");
+/** `onCommand` gets each thing the rider said. `error` explains why the mic stopped, if it did. */
+export function useVoice(onCommand: (text: string) => void) {
+  const [mode, setMode] = useState<VoiceMode>("off");
+  const [error, setError] = useState<string | null>(null);
+  const modeRef = useRef<VoiceMode>("off");
+  const rec = useRef<SpeechRec | null>(null);
+  const heard = useRef<string[]>([]); // hold mode: everything said while the button is down
+  const downAt = useRef(0);
+  const onCommandRef = useRef(onCommand);
+  useEffect(() => {
+    onCommandRef.current = onCommand;
+  });
+
+  const setBoth = (m: VoiceMode) => {
+    modeRef.current = m;
+    setMode(m);
+  };
+
+  // Close a listening session for good (no "send" on the way out)
+  const abort = useCallback(() => {
+    const r = rec.current;
+    rec.current = null;
+    if (!r) return;
+    r.onresult = r.onend = r.onerror = null;
     try {
-      const result = await sendVoice(body);
-      await say(result.reply);
-      return result;
+      r.abort();
     } catch {
-      await say("Sorry, I couldn't reach OxRide. Try again in a moment.");
-      return null;
-    } finally {
-      setState("idle");
+      // already closed
     }
   }, []);
 
-  const stop = useCallback(
-    async (position: LatLon | null, route: RouteResult | null): Promise<VoiceResult | null> => {
-      const r = recorder.current;
-      if (!r) return null;
-      recorder.current = null;
-      await new Promise<void>((resolve) => {
-        r.onstop = () => resolve();
-        r.stop();
-      });
-      r.stream.getTracks().forEach((t) => t.stop());
-      const blob = new Blob(chunks.current, { type: r.mimeType });
-      if (blob.size < 1000) {
-        setState("idle"); // a tap, not speech
-        return null;
+  const start = useCallback(() => {
+    abort(); // never two sessions at once
+    const SR = recognizer();
+    if (!SR) {
+      setError("Speech recognition isn't supported in this browser.");
+      setBoth("off");
+      return;
+    }
+    setError(null);
+    heard.current = [];
+    const r = new SR();
+    r.lang = "en-GB";
+    r.continuous = true; // keep going until we stop it
+    r.interimResults = false; // only finished sentences
+    r.onresult = (e) => {
+      for (let k = e.resultIndex; k < e.results.length; k++) {
+        if (!e.results[k].isFinal) continue;
+        const text = e.results[k][0].transcript.trim();
+        if (!text || isSpeaking()) continue; // ignore the app's own voice
+        if (modeRef.current === "continuous") onCommandRef.current(text);
+        else heard.current.push(text);
       }
-      return finish({
-        audio_b64: await blobToBase64(blob),
-        mime: (r.mimeType || "audio/webm").split(";")[0],
-        position: position ?? undefined,
-        route: route ?? undefined,
-      });
-    },
-    [finish],
-  );
+    };
+    r.onerror = (e) => {
+      if (e.error === "no-speech") {
+        // silence: fine while listening non-stop; when holding, say so (in onend)
+        return;
+      }
+      if (e.error === "aborted") {
+        // we never get this for our own stops (handlers are removed first): something else took the mic
+        setError("The microphone was taken by another tab or app. Close other OxRide tabs and try again.");
+        abort();
+        setBoth("off");
+        return;
+      }
+      setError(MIC_ERRORS[e.error] ?? `Microphone error: ${e.error}`);
+      abort();
+      setBoth("off");
+    };
+    r.onend = () => {
+      if (rec.current !== r) return; // an old session
+      if (modeRef.current === "continuous") {
+        try {
+          r.start(); // browsers stop every so often: carry on listening
+        } catch {
+          setBoth("off");
+        }
+        return;
+      }
+      // hold mode: the button was released -> send what was said
+      rec.current = null;
+      const text = heard.current.join(" ").trim();
+      heard.current = [];
+      setBoth("off");
+      if (text) onCommandRef.current(text);
+      else setError("Didn't catch that. Hold the mic and speak, then let go.");
+    };
+    rec.current = r;
+    try {
+      r.start();
+    } catch {
+      setError("Couldn't start the microphone. Try again.");
+      rec.current = null;
+      setBoth("off");
+    }
+  }, [abort]);
 
-  const ask = useCallback(
-    (text: string, position: LatLon | null, route: RouteResult | null) =>
-      finish({ text, position: position ?? undefined, route: route ?? undefined }),
-    [finish],
-  );
+  /** Mic button pressed. */
+  const press = useCallback(() => {
+    if (modeRef.current === "continuous") {
+      downAt.current = -1; // a tap to switch it off (handled on release)
+      return;
+    }
+    downAt.current = Date.now();
+    setBoth("hold");
+    start();
+  }, [start]);
 
-  return { state, supported, start, stop, ask };
+  /** Mic button released. */
+  const release = useCallback(() => {
+    if (downAt.current === -1) {
+      abort(); // tapped while listening non-stop: stop
+      setBoth("off");
+      return;
+    }
+    if (modeRef.current !== "hold") return;
+    if (Date.now() - downAt.current < HOLD_MS) {
+      setBoth("continuous"); // a quick tap: keep listening until tapped again
+      return;
+    }
+    try {
+      rec.current?.stop(); // held: stop and send (in onend)
+    } catch {
+      setBoth("off");
+    }
+  }, [abort]);
+
+  // Let go of the microphone when the page is hidden or closed, so another tab (or this
+  // one after a refresh) can use it; Chrome lets only one page do speech recognition.
+  useEffect(() => {
+    const release = () => {
+      if (document.visibilityState === "hidden") {
+        abort();
+        setBoth("off");
+      }
+    };
+    document.addEventListener("visibilitychange", release);
+    window.addEventListener("pagehide", abort);
+    return () => {
+      document.removeEventListener("visibilitychange", release);
+      window.removeEventListener("pagehide", abort);
+      abort();
+    };
+  }, [abort]);
+  return { mode, error, press, release, supported: !!recognizer() };
 }

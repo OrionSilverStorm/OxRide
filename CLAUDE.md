@@ -1,6 +1,6 @@
 # OxRide
 
-Time-aware, voice-first cycle navigation for Oxford, built for a hackathon (theme: TIME). Google Maps gives the shortest route for cars; OxRide gives the best route for a cyclist at the time they ride: it accounts for hills, wind and temperature, prefers cycle paths and quiet streets over main roads, and reroutes when you go off route. You can't type while cycling, so you talk to it: Gemini works out what you want and ElevenLabs speaks the answer and the directions. Web app / PWA, mobile first.
+Time-aware, voice-first cycle navigation for Oxford, built for a hackathon (theme: TIME). Google Maps gives the shortest route for cars; OxRide gives the best route for a cyclist at the time they ride: it accounts for hills and the time of day (darkness, rush hour), prefers cycle paths and quiet streets over main roads, and reroutes when you go off route. You can't type while cycling, so you talk to it: Gemini works out what you want and ElevenLabs speaks the answer and the directions. Web app / PWA, mobile first.
 
 ## Challenges we're entering
 
@@ -17,7 +17,7 @@ Time-aware, voice-first cycle navigation for Oxford, built for a hackathon (them
 - **Must have (this is the demo):** our own A* finds a sensible cycle route between two points in Oxford; the route is drawn on a live, deployed map; the same trip gives a different route at night than by day because of lit streets.
 - **Should have:** navigation mode (live location, spoken turn-by-turn, simulate ride); rerouting when off route; PWA on a phone; ETA prediction and best time to leave; rush hour and the three profiles; place search and "use my location"; push-to-talk with Gemini (new route, reroute, question) and ElevenLabs replies.
 - **Nice to have:** ElevenLabs voice with browser voice as fallback; Tiger Data storing weather and predictions; suffer score with a dragon that gets angrier the more you climb.
-- **Dream:** rerouting for blocked roads; wind and rain affecting the route itself.
+- **Dream:** rerouting for blocked roads.
 
 If we fall behind, cut from the bottom up (nice to have first, e.g. Tiger Data, then ElevenLabs since the browser voice still works). Never cut the route on the map and the day/night switch.
 
@@ -47,17 +47,17 @@ backend/
   vercel_app.py    Vercel entry point (mounts main.app under /api)
   tests/           pytest suite: routing, time model, navigation, API, ai (no network, no credits)
 frontend/
-  app/page.tsx     planning screen: map + controls
-  app/navigate/    navigation screen (components/Navigator.tsx)
+  app/page.tsx     the app: planning and navigation both live in components/Map.tsx
+  app/navigate/    placeholder (navigation currently happens in Map.tsx)
   app/debug/       routing debug panel (components/debug/)
-  components/      Map (planning), Navigator, RoutePanel, ElevationChart, SufferScore, VoiceButton
-  hooks/           useLocation, useNavigation (off-route check), useSimulatedRide, useVoice (mic + speak)
+  components/      Map (search, ride type, route, directions banner, voice command, mute), placeholders
+  hooks/           useVoice (mic: hold to talk, or tap to keep listening), useTheme (light/dark + toggle); the others are placeholders
   lib/api.ts       calls to the backend
-  lib/nav.ts       pure ride logic (projection, off route, announcements, hint, suffer score) + nav.test.ts
-  lib/speech.ts    say(): ElevenLabs via /speak, browser voice fallback; unlockAudio() for phones
-  lib/trip.ts      hands the planned trip to /navigate (sessionStorage)
+  lib/nav.ts       where the rider is along the route: current step, distance left, off route (+ nav.test.ts)
+  lib/speak.ts     say(): ElevenLabs via /speak, browser voice fallback; isSpeaking() so the mic ignores the app
+  lib/theme.ts     which Everforest palette shows: phone setting, dark while navigating, manual toggle (+ theme.test.ts)
   lib/mock.ts      fake data until the backend is ready
-  scripts/         dev-api.mjs (cross-platform backend start), test.mjs (npm test), e2e.mjs (npm run e2e)
+  scripts/         dev-api.mjs (cross-platform backend start), test.mjs (npm test)
   public/          manifest.json, app icons, dragon logo
 ```
 
@@ -79,7 +79,7 @@ frontend/
 
 - **`app/page.tsx`**: planning screen. Map, tap to set start/end, profile picker, departure time, route stats, charts.
 - **`app/navigate/page.tsx`**: navigation screen. Live dot, next turn, simulate ride, push-to-talk.
-- **`components/Map.tsx`**: the react-leaflet map: route line, start/end markers, live position dot, tile attribution.
+- **`components/Map.tsx`**: the react-leaflet map: route line, start/end markers, live position dot, tile attribution. Currently also the navigation mode (directions banner, time left, ride type, mute, voice command), using `lib/nav.ts`.
 - **`components/RoutePanel.tsx`**: distance, climb, ETA, share on cycleways, share on lit roads.
 - **`components/ElevationChart.tsx`**: elevation profile along the route.
 - **`components/DepartureChart.tsx`**: ETA/score per 15-minute slot from `/best-departure`.
@@ -105,7 +105,9 @@ ctx           {hour, is_dark, wind_speed, wind_dir, rain, temperature_c}      # 
 RouteResult   {route:[[lat,lon],...],          # drawn on the map
                elevations_m:[...],             # one per route point, for ElevationChart + suffer score
                stats:{distance_m, climb_m, eta_min, cycleway_share, lit_share},
-               steps:[Step]}
+               steps:[Step],
+               hint: Hint | null}              # only when leaving now (see "Best time to leave")
+Hint          {kind, text, in_min, leave_at}   # kind: rain_starts|rain_stops|dark_soon|light_soon|ice|rush_ends
 Step          {text, distance_m, lat, lon, maneuver:"left"|"right"|"straight"|"arrive"}
 Slot          {depart_at, eta_min, rain, wind_speed}                           # one per 15-minute departure option
 VoiceResult   {action:"new_route"|"reroute"|"answer", settings:{...RouteRequest fields...}, reply}
@@ -156,6 +158,8 @@ VoiceResult   {action:"new_route"|"reroute"|"answer", settings:{...RouteRequest 
 8. Back in the browser: `Map.tsx` draws `route`; `RoutePanel.tsx` shows `stats`; `ElevationChart.tsx` plots `elevations_m`; `SufferScore.tsx` is computed from `elevations_m`/`climb_m`.
 
 ### 3. Best time to leave
+
+Built as: `time_model.departure_hint(now, eta_min)`, returned as `hint` by `POST /route` when leaving now, and shown under the distance and arrival time until the rider has gone 100 m. Agreed rules: at most one hint, only for leaving within 60 min, rain counts as likely from 50%. Cases in priority order: rain about to start (leave now), rain about to stop, sunset soon / sunrise soon, icy roads (<= 2 °C), rush hour ending. "Faster later" and "less wind later" were dropped: wind changes speed by under 2%.
 
 What it is: a small hint, not the main feature. The route is always planned for the departure time in the request (`depart_at`, which is *now* unless the rider picked another time). The hint is one extra line under the route, such as "Leave in 20 min: the rain stops and the ride is 3 min faster". If no later slot is clearly better, show no hint. The departure chart and the database are extras (cut them first), but keep the one-line hint: it is the TIME theme and HRT's "recommend a time to leave".
 
@@ -209,8 +213,9 @@ What it is: a small hint, not the main feature. The route is always planned for 
 
 ## Route behaviour
 
+- Wind does not change the route: measured data (TU Delft) shows it changes cycling speed by under 2%, so it only affects the ETA.
 - Profiles: `fast`, `regular`, `chill` (same names in the UI, API and code). Each profile is a different set of cost factors in `routing.PROFILES`: chill = cycle paths and quiet roads even if longer, regular = prefers cycle paths and avoids repeated climbs, fast = mostly the shortest route.
-- The route depends on departure time: darkness (prefer lit streets), rush hour (quiet roads over main roads), wind and rain, temperature, hills (suffer score), and Oxford-specific cycling restrictions (avoid Cornmarket and Queen Street during restricted hours).
+- The route depends on departure time: darkness (prefer lit streets), rush hour (quiet roads over main roads), rain (slippery gravel), hills (suffer score), and Oxford-specific cycling restrictions (avoid Cornmarket and Queen Street during restricted hours).
 
 ## Design system: Everforest
 
@@ -307,4 +312,4 @@ Only edit your own files; ask the owner if you need a change in theirs.
 - API keys come from environment variables; never commit them. Keep `.env.example` current.
 - The frontend only talks to the backend through `frontend/lib/api.ts`; keep its types in sync with `main.py`.
 - Merge into `main` every couple of hours and keep `main` running: it is what gets deployed.
-- Run `npm test` (in `frontend/`) before pushing: backend tests, frontend unit tests and type check. With `npm run dev` running, `npm run e2e` checks the whole app in a headless browser (demo trip, day vs night, simulated ride, reroute). GitHub runs all of it on every push (`.github/workflows/tests.yml`). A new feature gets a test: backend in `backend/tests/`, frontend logic in `lib/*.test.ts`, user flows in `scripts/e2e.mjs`.
+- Run `npm test` (in `frontend/`) before pushing: backend tests, frontend unit tests and type check. GitHub runs the same on every push (`.github/workflows/tests.yml`). A new feature gets a test: backend in `backend/tests/`, frontend logic in `lib/*.test.ts`.

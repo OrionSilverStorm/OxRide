@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import navigation
 import routing
 import time_model
 
@@ -333,6 +334,38 @@ SERVICES = {
 _last_test = {}  # service -> time of its last live test, so the button can't be spammed
 
 
+def working_gemini_models(client, limit=8):
+    # Text "flash" models, stable before preview, each tried with a tiny prompt.
+    skip = ("image", "tts", "audio", "live", "embedding", "thinking")
+    names = [m.name.removeprefix("models/") for m in client.models.list()]
+    flash = [n for n in names if "flash" in n and not any(k in n for k in skip)]
+    flash.sort(key=lambda n: ("preview" in n or "exp" in n, "lite" in n, n))
+    working = []
+    for name in flash[:limit]:
+        try:
+            client.models.generate_content(model=name, contents="Reply with: ok")
+            working.append(name)
+        except Exception:
+            pass
+    return working
+
+
+@router.post("/gemini-speed")
+def gemini_speed(model: str | None = None, text: str = "take me to the station") -> dict:
+    # Time one real voice command with a given model (admin: pick a fast GEMINI_MODEL).
+    import ai
+    if not os.environ.get("GEMINI_API_KEY"):
+        return {"ok": False, "message": "GEMINI_API_KEY is not set on this server."}
+    report = {}
+    t0 = time.perf_counter()
+    try:
+        result = ai.interpret_voice(None, text, (51.7534, -1.254), None, model=model, report=report)
+        ok, answer = True, result
+    except Exception as e:
+        ok, answer = False, f"{type(e).__name__}: {str(e)[:300]}"
+    return {"ok": ok, "seconds": round(time.perf_counter() - t0, 1), **report, "answer": answer}
+
+
 @router.get("/services")
 def services() -> dict:
     # Which settings the server can see. Only true/false: never the values.
@@ -360,12 +393,19 @@ def test_service(name: str) -> dict:
             from google import genai
             client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
             model = os.environ.get("GEMINI_MODEL")
-            if not model:
-                flash = sorted(m.name.removeprefix("models/") for m in client.models.list() if "flash" in m.name)
-                return done(ok=False, models=flash,
-                            message="The key works. Now set GEMINI_MODEL to one of these models.")
-            resp = client.models.generate_content(model=model, contents="Reply with exactly: OxRide ready")
-            return done(ok=True, message=f"{model} replied: {resp.text.strip()[:100]}")
+            problem = "GEMINI_MODEL is not set."
+            if model:
+                try:
+                    resp = client.models.generate_content(model=model, contents="Reply with exactly: OxRide ready")
+                    return done(ok=True, message=f"{model} replied: {resp.text.strip()[:100]}")
+                except Exception as e:
+                    problem = f"GEMINI_MODEL={model!r} failed ({str(e)[:120]})."
+            # Find models this key can really use: listed isn't the same as available
+            working = working_gemini_models(client)
+            if not working:
+                return done(ok=False, models=[], message=f"{problem} No flash model answered with this key.")
+            return done(ok=False, models=working,
+                        message=f"{problem} These models work with this key: set GEMINI_MODEL to the first one.")
 
         if name == "elevenlabs":
             import base64
@@ -451,6 +491,9 @@ def debug_route(req: DebugRouteRequest) -> dict:
         "astar": {"expanded_count": len(expanded), "ms": round(ms, 1),
                   "expanded": [coord(n) for n in expanded],
                   "graph_nodes": G.number_of_nodes()},
+        # for the simulated ride: the route as one detailed line, and its directions
+        "line": [p for i, e in enumerate(ours["edges"]) for p in (e["coords"] if i == 0 else e["coords"][1:])],
+        "steps": navigation.build_steps(G, path),
     })
     routes.append(ours)
     if not ours["cost_check_ok"]:

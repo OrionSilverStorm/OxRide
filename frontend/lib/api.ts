@@ -5,20 +5,6 @@ export type LatLon = [number, number];
 export type Profile = "fast" | "regular" | "chill";
 export type Maneuver = "left" | "right" | "straight" | "arrive";
 
-export interface NavStep { instruction: string; distance_m: number; lat: number; lon: number }
-export interface NavigationData { distance_m: number; duration_s: number; steps: NavStep[] }
-
-// Same request body as /route
-export async function getNavigation(body: object): Promise<NavigationData> {
-  const res = await fetch("/api/navigation", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
 export interface Step {
   text: string;
   distance_m: number;
@@ -38,6 +24,15 @@ export interface RouteResult {
     lit_share: number;
   };
   steps: Step[];
+  hint?: DepartureHint | null; // only when leaving now, and only if worth saying
+}
+
+/** "Rain should stop by about 13:00. Leave then to stay dry." (backend time_model.departure_hint) */
+export interface DepartureHint {
+  kind: "rain_starts" | "rain_stops" | "dark_soon" | "light_soon" | "ice" | "rush_ends";
+  text: string;
+  in_min: number; // 0 = leave now
+  leave_at: string; // Oxford time, ISO
 }
 
 export interface RouteRequest {
@@ -105,12 +100,16 @@ export const sendVoice = (body: VoiceRequest) =>
     body: JSON.stringify(body),
   });
 
-export const speak = (text: string) =>
-  request<{ audio: string | null }>("/speak", {
+/** ElevenLabs speech as mp3. Throws when there's no audio (then use the browser's voice). */
+export async function speak(text: string): Promise<Blob> {
+  const res = await fetch(`${API_URL}/speak`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
   });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.blob();
+}
 
 export const getBestDeparture = (start: LatLon, end: LatLon, profile: Profile) =>
   request<Slot[]>(
@@ -167,7 +166,7 @@ export interface DebugSummary {
   turns: number;
 }
 
-export type DebugRouteId = "ours" | "shortest" | "google" | "drawn";
+export type DebugRouteId = "ours" | "shortest" | "google" | "drawn" | "baseline";
 
 export interface DebugRoute {
   id: DebugRouteId;
@@ -178,6 +177,8 @@ export interface DebugRoute {
   by_highway: Record<string, { length_m: number; cost: number }>;
   cost_check_ok: boolean;
   astar?: { expanded_count: number; ms: number; expanded?: LatLon[]; graph_nodes?: number };
+  line?: LatLon[]; // ours only: the whole route as one line (simulated ride)
+  steps?: Step[]; // ours only: turn-by-turn
   google?: { distance_m: number | null; duration_min: number; points: LatLon[] };
 }
 

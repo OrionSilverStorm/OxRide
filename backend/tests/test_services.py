@@ -51,3 +51,42 @@ def test_tests_are_rate_limited(client, monkeypatch):
     monkeypatch.setattr(debug, "_last_test", {"gemini": debug.time.time()})
     body = client.post("/debug/services/gemini/test").json()
     assert body["ok"] is False and "Wait" in body["message"]
+
+
+def test_wrong_gemini_model_lists_the_right_names(client, monkeypatch):
+    import types
+    from google import genai
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.models = types.SimpleNamespace(
+                generate_content=self.fail,
+                list=lambda: [types.SimpleNamespace(name="models/gemini-x-flash"),
+                              types.SimpleNamespace(name="models/gemini-old-flash"),
+                              types.SimpleNamespace(name="models/gemini-x-flash-image"),
+                              types.SimpleNamespace(name="models/gemini-x-pro")])
+
+        def fail(self, *, model, contents):
+            if model != "gemini-x-flash":
+                raise RuntimeError(f"404 models/{model} is not found")
+            return types.SimpleNamespace(text="ok")
+
+    monkeypatch.setattr(genai, "Client", FakeClient)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_MODEL", "models/flash")
+    body = client.post("/debug/services/gemini/test").json()
+    assert body["ok"] is False
+    assert body["models"] == ["gemini-x-flash"]  # only the one that really answered
+    assert "models/flash" in body["message"]
+
+
+def test_gemini_speed_times_a_voice_command(client, monkeypatch):
+    import ai
+    def fake(audio, text, position, route, model=None, report=None):
+        report.update(model=model, thinking="short")
+        return {"action": "answer", "settings": {}, "reply": "ok"}
+    monkeypatch.setattr(ai, "interpret_voice", fake)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    body = client.post("/debug/gemini-speed?model=gemini-x-flash").json()
+    assert body["ok"] and body["model"] == "gemini-x-flash" and body["thinking"] == "short"
+    assert isinstance(body["seconds"], float)
