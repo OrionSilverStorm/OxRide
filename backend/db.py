@@ -186,6 +186,8 @@ def create_daily_aggregate():
         GROUP BY 1
         WITH NO DATA
     ''')
+    # Created empty, and only materialized rows are visible, so fill it now
+    conn().execute("CALL refresh_continuous_aggregate('weather_daily', NULL, NULL)")
     print('Continuous aggregate created')
 
 
