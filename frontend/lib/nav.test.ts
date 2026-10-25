@@ -88,3 +88,16 @@ test("moving points: bearing, offset and point along the route", async () => {
   assert.deepEqual(pointAlong(ROUTE, CUM, -5), A);
   assert.deepEqual(pointAlong(ROUTE, CUM, 99999), C);
 });
+
+test("the line still to ride starts where the rider is", async () => {
+  const { routeAhead } = await import("./nav.ts");
+  assert.deepEqual(routeAhead(ROUTE, CUM, 0), ROUTE); // not started: the whole route
+  const mid = routeAhead(ROUTE, CUM, 1500); // halfway along the second leg
+  assert.equal(mid.length, 2);
+  near(distanceM(mid[0], offset(B, 90, 500)), 0, 2);
+  assert.deepEqual(mid[1], C);
+  const early = routeAhead(ROUTE, CUM, 400); // still on the first leg: the corner stays
+  assert.equal(early.length, 3);
+  assert.deepEqual(early.slice(1), [B, C]);
+  assert.deepEqual(routeAhead(ROUTE, CUM, 99999), [C]); // arrived
+});

@@ -121,3 +121,13 @@ export function pointAlong(route: LatLon[], cum: number[], d: number): LatLon {
   const t = (d - cum[i]) / (cum[i + 1] - cum[i] || 1);
   return [route[i][0] + t * (route[i + 1][0] - route[i][0]), route[i][1] + t * (route[i + 1][1] - route[i][1])];
 }
+
+/**
+ * The part of the route still ahead of a rider `d` metres along it: the point they're at,
+ * then every route point after it. The map draws this, so the line shrinks as you ride.
+ */
+export function routeAhead(route: LatLon[], cum: number[], d: number): LatLon[] {
+  if (d <= 0) return route;
+  const ahead = route.filter((_, i) => cum[i] > d);
+  return ahead.length ? [pointAlong(route, cum, d), ...ahead] : [route[route.length - 1]];
+}
