@@ -121,15 +121,15 @@ function UserMarker({ pos, setPos }: UserMarkerProps) {
 
 export default function Map() {
   //start and end location
-  let [userPos, setUserPos] = useState<L.LatLng | null>(null); // User's position, null until found
-  let [targetPos, setTargetPos] = useState<L.LatLng | null>(null); // Target position, null until the user clicks
+  const [userPos, setUserPos] = useState<L.LatLng | null>(null); // User's position, null until found
+  const [targetPos, setTargetPos] = useState<L.LatLng | null>(null); // Target position, null until the user clicks
   const [result, setResult] = useState<RouteResult | null>(null); // The planned ride (line, stats, steps), null until planned
   const route = result?.route ?? null; // Route as [lat, lon] points
   const [profile, setProfile] = useState<Profile>("regular"); //defaults to regular
   const [when, setWhen] = useState<When>("now"); // Departure: now, noon or night
   const [startPick, setStartPick] = useState<L.LatLng | null>(null); // Start picked on the map/demo (overrides GPS)
   const [tapSetsStart, setTapSetsStart] = useState(false); // Next map tap moves the start instead of the destination
-  const [hint, setHint] = useState<string | null>(null); // "Leave in 20 min: ..." line
+  const [hintFor, setHintFor] = useState<{ result: RouteResult; text: string | null } | null>(null); // "Leave in 20 min: ..." for one route
   const [busy, setBusy] = useState(false); // Waiting for /route
   const [error, setError] = useState<string | null>(null); // Shown above the bottom panel
   const [endName, setEndName] = useState<string | undefined>(undefined); // Destination name from search/voice
@@ -188,12 +188,12 @@ export default function Map() {
   };
 
   // "Best time to leave" hint, only when leaving now (TIME theme)
+  const hint = hintFor?.result === result && when === "now" ? hintFor.text : null;
   useEffect(() => {
-    setHint(null);
     if (!result || when !== "now" || !start || !targetPos) return;
     let cancelled = false;
     getBestDeparture([start.lat, start.lng], [targetPos.lat, targetPos.lng], profile)
-      .then((slots) => !cancelled && setHint(departureHint(slots, Date.now())))
+      .then((slots) => !cancelled && setHintFor({ result, text: departureHint(slots, Date.now()) }))
       .catch(() => {}); // no hint is fine
     return () => {
       cancelled = true;

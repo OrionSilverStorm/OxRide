@@ -42,14 +42,22 @@ backend/
   ai.py            Gemini voice commands + ElevenLabs voice (+ Nominatim search)
   db.py            Tiger Data
   main.py          API endpoints
-  tests/           pytest suite: routing, time model, navigation, API (no network)
+  debug.py         /debug/* endpoints: cost breakdown, A* trace, route comparison, API key tests
+  benchmark.py     ours vs shortest vs Google on fixed trips; --night finds day/night demo trips
+  vercel_app.py    Vercel entry point (mounts main.app under /api)
+  tests/           pytest suite: routing, time model, navigation, API, ai (no network, no credits)
 frontend/
   app/page.tsx     planning screen: map + controls
-  app/navigate/    navigation screen
-  components/      Map, RoutePanel, ElevationChart, DepartureChart, SufferScore, VoiceButton
+  app/navigate/    navigation screen (components/Navigator.tsx)
+  app/debug/       routing debug panel (components/debug/)
+  components/      Map (planning), Navigator, RoutePanel, ElevationChart, SufferScore, VoiceButton
   hooks/           useLocation, useNavigation (off-route check), useSimulatedRide, useVoice (mic + speak)
   lib/api.ts       calls to the backend
+  lib/nav.ts       pure ride logic (projection, off route, announcements, hint, suffer score) + nav.test.ts
+  lib/speech.ts    say(): ElevenLabs via /speak, browser voice fallback; unlockAudio() for phones
+  lib/trip.ts      hands the planned trip to /navigate (sessionStorage)
   lib/mock.ts      fake data until the backend is ready
+  scripts/         dev-api.mjs (cross-platform backend start), test.mjs (npm test), e2e.mjs (npm run e2e)
   public/          manifest.json, app icons, dragon logo
 ```
 
@@ -299,4 +307,4 @@ Only edit your own files; ask the owner if you need a change in theirs.
 - API keys come from environment variables; never commit them. Keep `.env.example` current.
 - The frontend only talks to the backend through `frontend/lib/api.ts`; keep its types in sync with `main.py`.
 - Merge into `main` every couple of hours and keep `main` running: it is what gets deployed.
-- Run `npm test` (in `frontend/`) before pushing: backend tests plus the frontend type check. GitHub runs the same on every push (`.github/workflows/tests.yml`). A new feature gets a test in `backend/tests/`.
+- Run `npm test` (in `frontend/`) before pushing: backend tests, frontend unit tests and type check. With `npm run dev` running, `npm run e2e` checks the whole app in a headless browser (demo trip, day vs night, simulated ride, reroute). GitHub runs all of it on every push (`.github/workflows/tests.yml`). A new feature gets a test: backend in `backend/tests/`, frontend logic in `lib/*.test.ts`, user flows in `scripts/e2e.mjs`.

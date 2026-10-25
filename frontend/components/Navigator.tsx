@@ -79,7 +79,6 @@ export default function Navigator() {
   const [simulate, setSimulate] = useState(true); // indoor demo by default; switch to live GPS outside
   const [follow, setFollow] = useState(true);
   const [rerouting, setRerouting] = useState(false);
-  const [arrived, setArrived] = useState(false);
   const [reroutes, setReroutes] = useState(0); // how many times we planned again (shown to tests)
   const said = useRef(new Set<string>());
   const lastReroute = useRef(0);
@@ -88,9 +87,13 @@ export default function Navigator() {
   useWakeLock();
 
   const gps = useLocation(!simulate);
-  const sim = useSimulatedRide(result?.route ?? null, simulate && !arrived);
+  const sim = useSimulatedRide(result?.route ?? null, simulate); // stops by itself at the end
   const position = simulate ? sim.position : gps.position;
-  const nav = useNavigation(result, position, simulate ? null : gps.accuracy);
+  const nav = useNavigation(result, position, {
+    accuracy: simulate ? null : gps.accuracy,
+    timeMs: simulate ? sim.time : gps.time,
+  });
+  const arrived = nav.nextStep?.maneuver === "arrive" && nav.distToStepM < 15;
 
   // Speak the first instruction when the ride starts
   useEffect(() => {
@@ -108,7 +111,6 @@ export default function Navigator() {
       said.current.add(a.key);
       say(a.text);
     }
-    if (nav.nextStep.maneuver === "arrive" && nav.distToStepM < 15) setArrived(true);
   }, [nav.nextIndex, nav.nextStep, nav.distToStepM, rerouting]);
 
   // Plan again from where the rider is now
@@ -126,7 +128,6 @@ export default function Navigator() {
       setTrip(updated);
       saveTrip(updated);
       setResult(next);
-      setArrived(false);
       setReroutes((n) => n + 1);
       if (next.steps[1]) say(`New route. ${next.steps[0].text}`);
     } catch {

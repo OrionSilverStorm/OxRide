@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { LatLon, RouteResult, Step } from "@/lib/api";
 import {
   cumulativeM,
@@ -21,8 +21,15 @@ export interface NavState {
   offRoute: boolean; // more than ~30 m off the route for a few seconds
 }
 
-/** Tracks the next step and detects being off the route. */
-export function useNavigation(route: RouteResult | null, position: LatLon | null, accuracy: number | null = null): NavState {
+/**
+ * Tracks the next step and detects being off the route.
+ * `timeMs` is when `position` was measured (GPS timestamp, or the simulator's tick).
+ */
+export function useNavigation(
+  route: RouteResult | null,
+  position: LatLon | null,
+  { accuracy = null, timeMs = 0 }: { accuracy?: number | null; timeMs?: number } = {},
+): NavState {
   const cum = useMemo(() => (route ? cumulativeM(route.route) : []), [route]);
   const stepAlong = useMemo(() => (route ? stepsAlongM(route.route, cum, route.steps) : []), [route, cum]);
   const proj = useMemo(
@@ -30,17 +37,17 @@ export function useNavigation(route: RouteResult | null, position: LatLon | null
     [route, cum, position],
   );
 
-  // Off route = too far away for a few seconds; each new position updates it.
-  const [off, setOff] = useState<{ route: RouteResult | null; state: OffRouteState }>({ route, state: ON_ROUTE });
-  useEffect(() => {
-    if (!proj) return;
-    setOff((o) => ({
-      route,
-      state: updateOffRoute(o.route === route ? o.state : ON_ROUTE, proj.distanceToRoute, Date.now(), {
-        accuracyM: accuracy ?? 0,
-      }),
-    }));
-  }, [proj, route, accuracy]);
+  // Off route = too far away for a few seconds. Updated once per new position
+  // (React's "adjust state when an input changes" pattern; a new route starts on route).
+  const [off, setOff] = useState<{ route: RouteResult | null; time: number; state: OffRouteState }>({
+    route,
+    time: 0,
+    state: ON_ROUTE,
+  });
+  if (proj && (off.route !== route || off.time !== timeMs)) {
+    const prev = off.route === route ? off.state : ON_ROUTE;
+    setOff({ route, time: timeMs, state: updateOffRoute(prev, proj.distanceToRoute, timeMs, { accuracyM: accuracy ?? 0 }) });
+  }
 
   const total = cum.at(-1) ?? 0;
   if (!route || !proj) {
@@ -54,6 +61,6 @@ export function useNavigation(route: RouteResult | null, position: LatLon | null
     distToStepM: Math.max(0, (stepAlong[i] ?? 0) - proj.alongM),
     remainingM: Math.max(0, total - proj.alongM),
     distanceToRoute: proj.distanceToRoute,
-    offRoute: off.route === route && off.state.offRoute, // a fresh route always starts on route
+    offRoute: off.route === route && off.state.offRoute,
   };
 }
