@@ -78,3 +78,13 @@ test("poor GPS accuracy raises the off-route limit", () => {
   s = updateOffRoute(s, 45, 10000, { accuracyM: 50 });
   assert.equal(s.offRoute, false);
 });
+
+test("moving points: bearing, offset and point along the route", async () => {
+  const { bearingDeg, offsetPoint, pointAlong } = await import("./nav.ts");
+  near(bearingDeg(A, B), 0, 0.5);
+  near(bearingDeg(B, C), 90, 0.5);
+  near(distanceM(A, offsetPoint(A, 45, 250)), 250, 0.5);
+  near(distanceM(pointAlong(ROUTE, CUM, 1500), offset(B, 90, 500)), 0, 2);
+  assert.deepEqual(pointAlong(ROUTE, CUM, -5), A);
+  assert.deepEqual(pointAlong(ROUTE, CUM, 99999), C);
+});

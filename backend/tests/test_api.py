@@ -88,3 +88,11 @@ def test_navigation_gives_real_steps_for_the_same_route(client):
 
 def test_navigation_rejects_bad_input(client):
     assert client.post("/navigation", json={**TRIP, "profile": "turbo"}).status_code == 422
+
+
+def test_debug_route_has_line_and_steps_for_the_simulated_ride(client):
+    body = client.post("/debug/route", json={**TRIP, "profile": "regular", "depart_at": NOON.isoformat()}).json()
+    ours = body["routes"][0]
+    assert len(ours["line"]) >= len(ours["edges"]) + 1
+    assert ours["steps"][-1]["maneuver"] == "arrive"
+    assert ours["line"][0] == ours["edges"][0]["coords"][0]

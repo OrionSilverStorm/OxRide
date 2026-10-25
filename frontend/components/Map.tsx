@@ -13,9 +13,10 @@ import {
 } from "react-leaflet";
 
 import L from "leaflet";
-import { LocateFixed, Mic, Volume2, VolumeX } from "lucide-react";
+import { Ear, EarOff, LocateFixed, Mic, Volume2, VolumeX } from "lucide-react";
 import { getRoute, searchPlace, sendVoice, speak, type RouteResult } from "@/lib/api";
 import { cumulativeM, currentStepIndex, ON_ROUTE, projectOnRoute, stepsAlongM, updateOffRoute } from "@/lib/nav";
+import { parseWake } from "@/lib/voice";
 
 //define ride types
 type Profile = "chill" | "regular" | "fast";
@@ -76,8 +77,37 @@ function say(text: string): () => void {
 // The bits of the browser's SpeechRecognition API we use
 interface SpeechRec {
   lang: string;
+  continuous: boolean;
+  interimResults: boolean;
   start: () => void;
-  onresult: (e: { results: { [i: number]: { [j: number]: { transcript: string } } } }) => void;
+  stop: () => void;
+  onresult: (e: {
+    resultIndex: number;
+    results: { length: number; [i: number]: { isFinal: boolean; [j: number]: { transcript: string } } };
+  }) => void;
+  onend: (() => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+}
+
+// Browser speech-to-text (Chrome/Safari), or null if this browser has none. Needs HTTPS or localhost
+function speechRecognition(): (new () => SpeechRec) | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as { SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
+// Short beep: "I heard Hey OxRide, go on"
+function beep() {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    osc.frequency.value = 880;
+    osc.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+  } catch {
+    // no sound available: the command still works
+  }
 }
 
 const OXFORD_CENTER: [number, number] = [51.752, -1.2577];
@@ -253,42 +283,94 @@ export default function Map() {
     m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`; // 1000+ m: km with one decimal; otherwise whole metres
 
   //************************************************************************************* */ gemini api voice listen
+  // A spoken command, from the mic button or after "Hey OxRide"
+  const handleCommand = async (text: string) => {
+    let r;
+    try {
+      // Gemini (via /voice) works out the place and ride type, and finds the place's coordinates
+      r = await sendVoice({
+        text,
+        position: userPos ? [userPos.lat, userPos.lng] : undefined,
+        route: nav ?? undefined,
+      });
+    } catch {
+      say("Sorry, I couldn't reach OxRide.");
+      return;
+    }
+    say(r.reply); // Spoken reply (ElevenLabs): the user just asked, so it's not muted
+    const p = (r.settings.profile as Profile | undefined) ?? profile;
+    if (r.settings.profile) setProfile(p); // Highlight chill/regular/fast
+    if (r.action === "new_route" && r.settings.end) {
+      const t = L.latLng(r.settings.end[0], r.settings.end[1]);
+      placeTarget(t); // Drop the red pin
+      map?.flyTo(t, 15);
+      sendPositions(p, t); // Plan the route now
+    } else if (r.action === "reroute") {
+      sendPositions(p); // Same destination, new way (e.g. "quieter please")
+    }
+  };
+  const handleRef = useRef(handleCommand); // Latest version for the long-running listener below
+  useEffect(() => {
+    handleRef.current = handleCommand;
+  });
+
+  // Tap the mic once and speak: it stops by itself when you stop talking
   const listen = () => {
-    // Browser speech-to-text (Chrome/Safari). Needs HTTPS or localhost
-    const SR =
-      (window as unknown as { SpeechRecognition?: new () => SpeechRec }).SpeechRecognition ||
-      (window as unknown as { webkitSpeechRecognition?: new () => SpeechRec }).webkitSpeechRecognition;
+    const SR = speechRecognition();
     if (!SR) return alert("Speech recognition not supported");
     const rec = new SR();
     rec.lang = "en-GB";
-    rec.onresult = async (e) => {
-      const text = e.results[0][0].transcript; // What the user said
-      let r;
-      try {
-        // Gemini (via /voice) works out the place and ride type, and finds the place's coordinates
-        r = await sendVoice({
-          text,
-          position: userPos ? [userPos.lat, userPos.lng] : undefined,
-          route: nav ?? undefined,
-        });
-      } catch {
-        say("Sorry, I couldn't reach OxRide.");
-        return;
-      }
-      say(r.reply); // Spoken reply (ElevenLabs): the user just asked, so it's not muted
-      const p = (r.settings.profile as Profile | undefined) ?? profile;
-      if (r.settings.profile) setProfile(p); // Highlight chill/regular/fast
-      if (r.action === "new_route" && r.settings.end) {
-        const t = L.latLng(r.settings.end[0], r.settings.end[1]);
-        placeTarget(t); // Drop the red pin
-        map?.flyTo(t, 15);
-        sendPositions(p, t); // Plan the route now
-      } else if (r.action === "reroute") {
-        sendPositions(p); // Same destination, new way (e.g. "quieter please")
-      }
-    };
+    rec.onresult = (e) => handleRef.current(e.results[0][0].transcript); // What the user said
     rec.start(); // Starts listening
   };
+
+  // Hands-free: keep listening and react only to "Hey OxRide ..." (no buttons while cycling)
+  const [handsFree, setHandsFree] = useState(false);
+  useEffect(() => {
+    const SR = speechRecognition();
+    if (!handsFree || !SR) return;
+    const rec = new SR();
+    rec.lang = "en-GB";
+    rec.continuous = true; // Don't stop after one sentence
+    rec.interimResults = false; // Only finished sentences
+    let stopped = false;
+    let waitUntil = 0; // After a bare "Hey OxRide", the next sentence is the command
+    rec.onresult = (e) => {
+      for (let k = e.resultIndex; k < e.results.length; k++) {
+        if (!e.results[k].isFinal) continue;
+        const text = e.results[k][0].transcript;
+        if (Date.now() < waitUntil) {
+          waitUntil = 0;
+          handleRef.current(text);
+          continue;
+        }
+        const wake = parseWake(text);
+        if (!wake.heard) continue; // Ordinary talk: ignore
+        if (wake.command) handleRef.current(wake.command);
+        else {
+          beep();
+          waitUntil = Date.now() + 8000;
+        }
+      }
+    };
+    // Browsers stop listening every so often: start again until switched off
+    rec.onend = () => {
+      if (stopped) return;
+      try {
+        rec.start();
+      } catch {
+        // already started
+      }
+    };
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") stopped = true; // No mic permission
+    };
+    rec.start();
+    return () => {
+      stopped = true;
+      rec.stop();
+    };
+  }, [handsFree]);
 
   // Off the route by more than ~30 m for a few seconds: plan again from here
   const off = useRef(ON_ROUTE);
@@ -487,10 +569,24 @@ export default function Map() {
       </button>
       <button
         onClick={listen} // Press, then speak: "chill ride to the Bodleian"
+        disabled={handsFree} // Hands-free is already listening
         aria-label="Speak a command"
-        className={`absolute left-3 z-[1000] rounded bg-white px-3 py-2 shadow ${nav ? "bottom-56" : "bottom-36"}`}
+        className={`absolute left-3 z-[1000] rounded bg-white px-3 py-2 shadow disabled:opacity-50 ${nav ? "bottom-56" : "bottom-36"}`}
       >
         <Mic className="size-5" />
+      </button>
+      <button
+        onClick={() => {
+          if (!handsFree && !speechRecognition()) return alert("Speech recognition not supported");
+          setHandsFree((v) => !v);
+        }}
+        aria-label={handsFree ? "Stop listening for Hey OxRide" : "Listen for Hey OxRide"}
+        title={handsFree ? "Listening for \"Hey OxRide\"" : "Hands-free: say \"Hey OxRide\""}
+        className={`absolute left-3 z-[1000] rounded px-3 py-2 shadow ${
+          handsFree ? "bg-blue-600 text-white" : "bg-white"
+        } ${nav ? "bottom-[17rem]" : "bottom-52"}`}
+      >
+        {handsFree ? <Ear className="size-5" /> : <EarOff className="size-5" />}
       </button>
     </div>
   );

@@ -4,7 +4,7 @@
 // picked each road, and how our route compares with the shortest route, Google's
 // cycling route and a route you draw. Profile numbers can be tuned live.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   debugRoute,
   getDebugProfiles,
@@ -21,7 +21,20 @@ import {
   type LatLon,
   type Profile,
   type ProfileParams,
+  type Step,
 } from "@/lib/api";
+import {
+  bearingDeg,
+  cumulativeM,
+  currentStepIndex,
+  offsetPoint,
+  ON_ROUTE,
+  pointAlong,
+  projectOnRoute,
+  stepsAlongM,
+  updateOffRoute,
+  type OffRouteState,
+} from "@/lib/nav";
 import DebugMap, { ROUTE_COLORS, costColor, highwayColor, type ColorBy } from "./DebugMap";
 
 type ClickMode = "start" | "end" | "waypoint" | "none";
@@ -49,6 +62,138 @@ function ctxOverride(f: CtxForm): DebugCtx | null {
     if (f[k] !== "" && !Number.isNaN(Number(f[k]))) o[k] = Number(f[k]);
   }
   return Object.keys(o).length ? o : null;
+}
+
+// --- One-click scenarios and extreme demo trips --------------------------------------
+
+type Scenario = "live" | "day" | "night" | "rush" | "rain" | "headwind" | "tailwind" | "custom";
+
+const SCENARIO_LABEL: [Scenario, string][] = [
+  ["live", "Live"], ["day", "Day"], ["night", "Night"], ["rush", "Rush hour"],
+  ["rain", "Rain"], ["headwind", "Headwind"], ["tailwind", "Tailwind"],
+];
+
+const CALM: CtxForm = { dark: "off", rush: "off", wind_ms: "0", wind_from_deg: "0", rain_mm: "0" };
+
+// The context for a scenario. Wind blows along the trip (A -> B), 8 m/s.
+function scenarioForm(s: Scenario, start: LatLon | null, end: LatLon | null): CtxForm {
+  const along = start && end ? Math.round(bearingDeg(start, end)) : 0;
+  switch (s) {
+    case "live": return EMPTY_CTX;
+    case "night": return { ...CALM, dark: "on" };
+    case "rush": return { ...CALM, rush: "on" };
+    case "rain": return { ...CALM, rain_mm: "2" };
+    case "headwind": return { ...CALM, wind_ms: "8", wind_from_deg: String(along) }; // wind comes from B
+    case "tailwind": return { ...CALM, wind_ms: "8", wind_from_deg: String((along + 180) % 360) };
+    default: return CALM;
+  }
+}
+
+// Trips where each scenario changes the route the most (found with backend/benchmark.py-style search).
+const DEMO_TRIPS: { label: string; start: LatLon; end: LatLon; scenario: Scenario; profile?: Profile; note: string }[] = [
+  { label: "Night: Iffley Rd → Osney", start: [51.747, -1.24], end: [51.751, -1.278], scenario: "night",
+    note: "lit share 36% by day → 96% at night, and shorter" },
+  { label: "Rush hour: Iffley Rd → Westgate", start: [51.747, -1.24], end: [51.75, -1.26], scenario: "rush",
+    note: "main roads 24% → 0% (a long detour)" },
+  { label: "Ride type: Osney → Summertown", start: [51.751, -1.278], end: [51.7768, -1.2643], scenario: "day", profile: "chill",
+    note: "chill 10% main roads vs 86% on the shortest route" },
+  { label: "Rain: Radcliffe Cam → Wolvercote", start: [51.7534, -1.254], end: [51.78, -1.285], scenario: "rain",
+    note: "small: rain only makes gravel less attractive" },
+  { label: "Wind: Osney → Templars Sq", start: [51.751, -1.278], end: [51.7345, -1.21], scenario: "headwind",
+    note: "route stays the same; only the ETA moves (TU Delft data)" },
+];
+
+// --- Simulated ride ---------------------------------------------------------------------
+
+const TICK_MS = 250;
+const RIDE_SPEED = 6.7; // m/s, 15 mph
+const DETOUR_M = 120; // how far the wrong turn goes
+
+interface Ride {
+  line: LatLon[] | null; // the route this progress belongs to
+  along: number;
+  detour: { from: LatLon; bearing: number; gone: number } | null;
+  off: OffRouteState;
+}
+
+const freshRide = (line: LatLon[] | null): Ride => ({ line, along: 0, detour: null, off: ON_ROUTE });
+
+/** A dot riding `line`. wrongTurn() leaves the route; onOffRoute fires after the usual few seconds. */
+function useDebugRide(line: LatLon[] | null, running: boolean, speedUp: number, onOffRoute: (p: LatLon) => void) {
+  const cum = useMemo(() => (line ? cumulativeM(line) : []), [line]);
+  const total = cum.at(-1) ?? 0;
+  const [state, setState] = useState<Ride>(() => freshRide(line));
+  const ride = state.line === line ? state : freshRide(line); // a new route starts from its beginning
+  const offRef = useRef(onOffRoute);
+  useEffect(() => {
+    offRef.current = onOffRoute;
+  });
+
+  const position = useMemo<LatLon | null>(() => {
+    if (!line || !line.length) return null;
+    const d = ride.detour;
+    return d ? offsetPoint(d.from, d.bearing, d.gone) : pointAlong(line, cum, ride.along);
+  }, [line, cum, ride.along, ride.detour]);
+
+  useEffect(() => {
+    if (!running || !line || line.length < 2) return;
+    const id = setInterval(() => {
+      const step = RIDE_SPEED * speedUp * (TICK_MS / 1000);
+      setState((s) => {
+        const r = s.line === line ? s : freshRide(line);
+        if (r.detour) {
+          const detour = { ...r.detour, gone: Math.min(DETOUR_M, r.detour.gone + RIDE_SPEED * (TICK_MS / 1000)) };
+          const here = offsetPoint(detour.from, detour.bearing, detour.gone);
+          const off = updateOffRoute(r.off, projectOnRoute(line, cum, here).distanceToRoute, Date.now());
+          return { ...r, detour, off };
+        }
+        return { ...r, along: Math.min(total, r.along + step) };
+      });
+    }, TICK_MS);
+    return () => clearInterval(id);
+  }, [running, line, cum, total, speedUp]);
+
+  const wrongTurn = useCallback(() => {
+    if (!line || line.length < 2) return;
+    setState((s) => {
+      const r = s.line === line ? s : freshRide(line);
+      if (r.detour) return r;
+      const here = pointAlong(line, cum, r.along);
+      const seg = projectOnRoute(line, cum, here).segment;
+      const heading = bearingDeg(line[seg], line[Math.min(seg + 1, line.length - 1)]);
+      // turn whichever way leads furthest from every part of the route
+      const away = (b: number) => projectOnRoute(line, cum, offsetPoint(here, b, DETOUR_M)).distanceToRoute;
+      const bearing = [90, 270, 45, 315].map((t) => (heading + t) % 360).reduce((a, b) => (away(b) > away(a) ? b : a));
+      return { ...r, detour: { from: here, bearing, gone: 0 } };
+    });
+  }, [line, cum]);
+
+  // tell the panel once when the rider becomes off route
+  const offRoute = ride.off.offRoute;
+  useEffect(() => {
+    if (offRoute && position) offRef.current(position);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offRoute]);
+
+  const reset = useCallback(() => setState(freshRide(line)), [line]);
+  return { position, along: ride.along, total, cum, offRoute: ride.off.offRoute, detouring: !!ride.detour, wrongTurn, reset };
+}
+
+function RideStatus({ line, cum, steps, along, total, etaMin }: {
+  line: LatLon[]; cum: number[]; steps: Step[]; along: number; total: number; etaMin: number | null;
+}) {
+  const stepAlong = useMemo(() => stepsAlongM(line, cum, steps), [line, cum, steps]);
+  const i = currentStepIndex(stepAlong, along);
+  const left = Math.max(0, total - along);
+  return (
+    <div className="rounded bg-neutral-900 p-2 text-white">
+      <div className="font-semibold">{steps[i]?.text ?? "—"}</div>
+      <div className="text-xs opacity-80">then {steps[i + 1]?.text ?? "arrive"}</div>
+      <div className="mt-1 text-xs opacity-80">
+        {(left / 1000).toFixed(2)} km left{etaMin != null && total ? ` · ${Math.max(0, Math.round((etaMin * left) / total))} min` : ""}
+      </div>
+    </div>
+  );
 }
 
 // Paste-ready Python for routing.PROFILES.
@@ -252,7 +397,7 @@ export default function DebugPanel() {
   const [tuned, setTuned] = useState<ProfileParams | null>(null);
   const [google, setGoogle] = useState(false);
   const [visible, setVisible] = useState<Record<DebugRouteId | "explored", boolean>>({
-    ours: true, shortest: true, google: true, drawn: true, explored: false,
+    ours: true, shortest: true, google: true, drawn: true, baseline: true, explored: false,
   });
   const [colorBy, setColorBy] = useState<ColorBy>("route");
   const [result, setResult] = useState<DebugRouteResult | null>(null);
@@ -262,6 +407,11 @@ export default function DebugPanel() {
   const [sortBy, setSortBy] = useState<"order" | "cost" | "cost_per_m">("order");
   const [selected, setSelected] = useState<{ route: DebugRouteId; idx: number } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [scenario, setScenario] = useState<Scenario>("live");
+  const [demoNote, setDemoNote] = useState<string | null>(null);
+  const [rideOn, setRideOn] = useState(false);
+  const [speedUp, setSpeedUp] = useState<"1" | "5" | "20">("5");
+  const [reroutes, setReroutes] = useState(0);
   const runId = useRef(0);
 
   useEffect(() => {
@@ -281,18 +431,17 @@ export default function DebugPanel() {
     const id = ++runId.current;
     const t = setTimeout(() => {
       setLoading(true);
-      debugRoute({
-        start,
-        end,
-        profile,
-        depart_at: departAt || null,
-        profile_override: tuned,
-        ctx_override: ctxOverride(ctxForm),
-        waypoints: waypoints.length ? waypoints : null,
-        google,
-      })
-        .then((r) => {
+      const base = { start, end, profile, depart_at: departAt || null, profile_override: tuned };
+      const compare = scenario !== "live" && scenario !== "day" && scenario !== "custom";
+      Promise.all([
+        debugRoute({ ...base, ctx_override: ctxOverride(ctxForm), waypoints: waypoints.length ? waypoints : null, google }),
+        // the same trip on a calm day, to show what the scenario changed
+        compare ? debugRoute({ ...base, ctx_override: ctxOverride(CALM) }) : Promise.resolve(null),
+      ])
+        .then(([r, calm]) => {
           if (id !== runId.current) return;
+          const calmRoute = calm?.routes.find((x) => x.id === "ours");
+          if (calmRoute) r.routes.push({ ...calmRoute, id: "baseline", label: "Same trip, calm day", astar: undefined });
           setResult(r);
           setError(null);
           setSelected(null);
@@ -301,7 +450,31 @@ export default function DebugPanel() {
         .finally(() => id === runId.current && setLoading(false));
     }, 350);
     return () => clearTimeout(t);
-  }, [start, end, waypoints, profile, departAt, ctxForm, tuned, google, meta]);
+  }, [start, end, waypoints, profile, departAt, ctxForm, tuned, google, meta, scenario]);
+
+  const pickScenario = (s: Scenario, from = start, to = end) => {
+    setScenario(s);
+    setCtxForm(scenarioForm(s, from, to));
+  };
+
+  const runDemo = (t: (typeof DEMO_TRIPS)[number]) => {
+    setStart(t.start);
+    setEnd(t.end);
+    setWaypoints([]);
+    if (t.profile) setProfile(t.profile);
+    setTuned(null);
+    setDemoNote(t.note);
+    setRideOn(false);
+    pickScenario(t.scenario, t.start, t.end);
+  };
+
+  // Simulated ride: follows our route; after a wrong turn it re-plans from the dot
+  const ours = result?.routes.find((r) => r.id === "ours");
+  const ride = useDebugRide(ours?.line ?? null, rideOn, Number(speedUp), (p) => {
+    setReroutes((n) => n + 1);
+    setWaypoints([]);
+    setStart(p); // re-plans from where the rider is
+  });
 
   const onMapClick = (p: LatLon) => {
     if (mode === "start") { setStart(p); setMode("end"); }
@@ -367,6 +540,37 @@ export default function DebugPanel() {
               ? "Click the map to add points your route must pass through (e.g. trace Google's line). Shortest hops between them."
               : "Pick a mode, then click the map. Markers can be dragged."}
           </p>
+          <div className="mb-2">
+            <div className="mb-1 text-xs text-neutral-500">Scenario</div>
+            <div className="flex flex-wrap gap-1">
+              {SCENARIO_LABEL.map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => pickScenario(k)}
+                  className={`rounded border px-2 py-1 text-xs ${scenario === k ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-300 bg-white hover:bg-neutral-100"}`}
+                >
+                  {label}
+                </button>
+              ))}
+              {scenario === "custom" && <span className="px-1 py-1 text-xs text-neutral-500">custom (edited below)</span>}
+            </div>
+          </div>
+          <div className="mb-2">
+            <div className="mb-1 text-xs text-neutral-500">Demo trips (extreme cases)</div>
+            <div className="flex flex-wrap gap-1">
+              {DEMO_TRIPS.map((t) => (
+                <button
+                  key={t.label}
+                  onClick={() => runDemo(t)}
+                  title={t.note}
+                  className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs hover:bg-neutral-100"
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            {demoNote && <p className="mt-1 text-xs text-neutral-600">Shows: {demoNote}</p>}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <Seg value={profile} onChange={(v) => { setProfile(v); setTuned(null); }} options={[["fast", "fast"], ["regular", "regular"], ["chill", "chill"]]} />
             <input
@@ -401,9 +605,49 @@ export default function DebugPanel() {
           </Section>
         )}
 
+        {ours?.line && ours.steps && (
+          <Section
+            title="Simulated ride"
+            right={reroutes > 0 ? <span className="text-xs text-neutral-500">rerouted {reroutes}×</span> : undefined}
+          >
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setRideOn((v) => !v)}
+                className="rounded bg-blue-600 px-3 py-1 text-xs text-white"
+              >
+                {rideOn ? "Pause" : ride.along > 0 ? "Resume" : "Start ride"}
+              </button>
+              <Seg value={speedUp} onChange={setSpeedUp} options={[["1", "1×"], ["5", "5×"], ["20", "20×"]]} />
+              <button
+                onClick={ride.wrongTurn}
+                disabled={!rideOn || ride.detouring}
+                className="rounded border border-neutral-300 px-3 py-1 text-xs disabled:opacity-50"
+              >
+                Wrong turn
+              </button>
+              <button
+                onClick={() => {
+                  setRideOn(false);
+                  ride.reset();
+                }}
+                className="text-xs underline"
+              >
+                reset
+              </button>
+            </div>
+            <RideStatus line={ours.line} cum={ride.cum} steps={ours.steps} along={ride.along} total={ride.total}
+              etaMin={ours.summary.eta_min} />
+            {ride.detouring && (
+              <p className="mt-1 text-xs text-amber-700">
+                {ride.offRoute ? "Off route: finding a new way…" : "Leaving the route… (re-plans after ~4 s more than 30 m away)"}
+              </p>
+            )}
+          </Section>
+        )}
+
         <Section title="Map layers">
           <div className="flex flex-wrap gap-3 text-xs">
-            {(["ours", "shortest", "google", "drawn", "explored"] as const).map((k) => (
+            {(["ours", "shortest", "google", "drawn", "baseline", "explored"] as const).map((k) => (
               <label key={k} className="flex items-center gap-1">
                 <input type="checkbox" checked={visible[k]} onChange={(e) => setVisible({ ...visible, [k]: e.target.checked })} />
                 <span style={{ color: k === "explored" ? "#ea580c" : ROUTE_COLORS[k] }}>
@@ -427,14 +671,14 @@ export default function DebugPanel() {
           )}
         </Section>
 
-        <Section title="Context passed to A*" right={<button className="text-xs underline" onClick={() => setCtxForm(EMPTY_CTX)}>reset</button>}>
+        <Section title="Context passed to A*" right={<button className="text-xs underline" onClick={() => pickScenario("live")}>reset</button>}>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
             {(["dark", "rush"] as const).map((k) => (
               <div key={k} className="flex items-center justify-between gap-1">
                 <span>
                   {k} <b className={ctx?.[k] ? "text-amber-700" : ""}>{ctx ? String(ctx[k]) : ""}</b>
                 </span>
-                <Seg value={ctxForm[k]} onChange={(v) => setCtxForm({ ...ctxForm, [k]: v })} options={[["auto", "auto"], ["on", "on"], ["off", "off"]]} />
+                <Seg value={ctxForm[k]} onChange={(v) => { setScenario("custom"); setCtxForm({ ...ctxForm, [k]: v }); }} options={[["auto", "auto"], ["on", "on"], ["off", "off"]]} />
               </div>
             ))}
             {(["wind_ms", "wind_from_deg", "rain_mm"] as const).map((k) => (
@@ -442,7 +686,7 @@ export default function DebugPanel() {
                 <span>
                   {k} <span className="text-neutral-400">(weather {weather ? String(weather[k]) : "?"})</span>
                 </span>
-                <input className={num} placeholder="auto" value={ctxForm[k]} onChange={(e) => setCtxForm({ ...ctxForm, [k]: e.target.value })} />
+                <input className={num} placeholder="auto" value={ctxForm[k]} onChange={(e) => { setScenario("custom"); setCtxForm({ ...ctxForm, [k]: e.target.value }); }} />
               </label>
             ))}
             <div className="col-span-2 text-neutral-500">
@@ -621,6 +865,7 @@ export default function DebugPanel() {
           </div>
         )}
         <DebugMap
+          rider={ride.position && (rideOn || ride.along > 0 || ride.detouring) ? ride.position : null}
           start={start}
           end={end}
           waypoints={waypoints}

@@ -91,3 +91,33 @@ export function updateOffRoute(
   const since = state.since ?? nowMs;
   return { since, offRoute: nowMs - since >= holdMs };
 }
+
+// --- Moving a point (used by the simulated ride on /debug) ------------------------------
+
+/** Compass bearing in degrees from a to b. */
+export function bearingDeg(a: LatLon, b: LatLon): number {
+  const y = Math.sin(rad(b[1] - a[1])) * Math.cos(rad(b[0]));
+  const x = Math.cos(rad(a[0])) * Math.sin(rad(b[0])) - Math.sin(rad(a[0])) * Math.cos(rad(b[0])) * Math.cos(rad(b[1] - a[1]));
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+/** The point `metres` away from p in direction `bearing` (degrees). */
+export function offsetPoint(p: LatLon, bearing: number, metres: number): LatLon {
+  const d = metres / EARTH_R;
+  const b = rad(bearing);
+  const lat1 = rad(p[0]);
+  const lon1 = rad(p[1]);
+  const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(b));
+  const lon2 = lon1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(lat1), Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
+  return [(lat2 * 180) / Math.PI, (lon2 * 180) / Math.PI];
+}
+
+/** The point `d` metres along the route (clamped to its ends). */
+export function pointAlong(route: LatLon[], cum: number[], d: number): LatLon {
+  if (d <= 0) return route[0];
+  if (d >= cum[cum.length - 1]) return route[route.length - 1];
+  let i = 0;
+  while (cum[i + 1] < d) i++;
+  const t = (d - cum[i]) / (cum[i + 1] - cum[i] || 1);
+  return [route[i][0] + t * (route[i + 1][0] - route[i][0]), route[i][1] + t * (route[i + 1][1] - route[i][1])];
+}

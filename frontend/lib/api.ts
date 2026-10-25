@@ -157,7 +157,7 @@ export interface DebugSummary {
   turns: number;
 }
 
-export type DebugRouteId = "ours" | "shortest" | "google" | "drawn";
+export type DebugRouteId = "ours" | "shortest" | "google" | "drawn" | "baseline";
 
 export interface DebugRoute {
   id: DebugRouteId;
@@ -168,6 +168,8 @@ export interface DebugRoute {
   by_highway: Record<string, { length_m: number; cost: number }>;
   cost_check_ok: boolean;
   astar?: { expanded_count: number; ms: number; expanded?: LatLon[]; graph_nodes?: number };
+  line?: LatLon[]; // ours only: the whole route as one line (simulated ride)
+  steps?: Step[]; // ours only: turn-by-turn
   google?: { distance_m: number | null; duration_min: number; points: LatLon[] };
 }
 

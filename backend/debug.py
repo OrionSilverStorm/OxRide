@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import navigation
 import routing
 import time_model
 
@@ -457,6 +458,9 @@ def debug_route(req: DebugRouteRequest) -> dict:
         "astar": {"expanded_count": len(expanded), "ms": round(ms, 1),
                   "expanded": [coord(n) for n in expanded],
                   "graph_nodes": G.number_of_nodes()},
+        # for the simulated ride: the route as one detailed line, and its directions
+        "line": [p for i, e in enumerate(ours["edges"]) for p in (e["coords"] if i == 0 else e["coords"][1:])],
+        "steps": navigation.build_steps(G, path),
     })
     routes.append(ours)
     if not ours["cost_check_ok"]:
