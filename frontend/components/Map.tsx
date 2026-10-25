@@ -536,10 +536,7 @@ export default function Map() {
               ) => (
                 <button
                   key={p} // React needs a unique key per item in a list
-                  onClick={() => {
-                    setProfile(p); // Highlight the selected ride type
-                    sendPositions(p); // Reroute now with the new type (returns early if a pin is missing)
-                  }}
+                  onClick={() => setProfile(p)} // Only choose the ride type: the route starts with "Drop a Pin and Ride"
                   className={`flex-1 rounded px-2 py-1 text-sm capitalize shadow ${
                     // flex-1: equal widths; capitalize: "chill" shows as "Chill"
                     profile === p ? "bg-blue-600 text-white" : "bg-white" // Active one is blue, the rest are white
