@@ -170,3 +170,21 @@ export const debugRoute = (body: DebugRouteRequest) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
+// --- Services box on /debug: are the API keys set up? Mirrors debug.py. ---
+
+export type ServiceName = "gemini" | "elevenlabs" | "database" | "google_maps";
+
+export const getServices = () =>
+  request<Record<ServiceName, Record<string, boolean>>>("/debug/services");
+
+export interface ServiceTest {
+  ok: boolean;
+  message: string;
+  ms?: number;
+  models?: string[]; // Gemini: model names to pick from when GEMINI_MODEL isn't set
+  audio?: string; // ElevenLabs: base64 mp3
+}
+
+export const testService = (name: ServiceName) =>
+  request<ServiceTest>(`/debug/services/${name}/test`, { method: "POST" });

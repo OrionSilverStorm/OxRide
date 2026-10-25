@@ -322,6 +322,78 @@ def google_route(start, end):
 
 # --- Endpoints -------------------------------------------------------------------
 
+# --- Are the API keys set up? (the "Services" box on /debug) -----------------------
+
+SERVICES = {
+    "gemini": ["GEMINI_API_KEY", "GEMINI_MODEL"],
+    "elevenlabs": ["ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID", "ELEVENLABS_MODEL"],
+    "database": ["DATABASE_URL"],
+    "google_maps": ["GOOGLE_MAPS_API_KEY"],
+}
+_last_test = {}  # service -> time of its last live test, so the button can't be spammed
+
+
+@router.get("/services")
+def services() -> dict:
+    # Which settings the server can see. Only true/false: never the values.
+    return {name: {var: bool(os.environ.get(var)) for var in names} for name, names in SERVICES.items()}
+
+
+@router.post("/services/{name}/test")
+def test_service(name: str) -> dict:
+    # One small real call to check a key works. Costs a few ElevenLabs credits at most.
+    if name not in SERVICES:
+        raise HTTPException(404, f"unknown service {name!r}")
+    if time.time() - _last_test.get(name, 0) < 10:
+        return {"ok": False, "message": "Wait 10 seconds between tests."}
+    missing = [v for v in SERVICES[name][:1] if not os.environ.get(v)]
+    if missing:
+        return {"ok": False, "message": f"{missing[0]} is not set on this server."}
+    _last_test[name] = time.time()
+    t0 = time.perf_counter()
+
+    def done(**kw):
+        return {**kw, "ms": round((time.perf_counter() - t0) * 1000)}
+
+    try:
+        if name == "gemini":
+            from google import genai
+            client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+            model = os.environ.get("GEMINI_MODEL")
+            if not model:
+                flash = sorted(m.name.removeprefix("models/") for m in client.models.list() if "flash" in m.name)
+                return done(ok=False, models=flash,
+                            message="The key works. Now set GEMINI_MODEL to one of these models.")
+            resp = client.models.generate_content(model=model, contents="Reply with exactly: OxRide ready")
+            return done(ok=True, message=f"{model} replied: {resp.text.strip()[:100]}")
+
+        if name == "elevenlabs":
+            import base64
+            from elevenlabs.client import ElevenLabs
+            voice = os.environ.get("ELEVENLABS_VOICE_ID")
+            if not voice:
+                return done(ok=False, message="ELEVENLABS_VOICE_ID is not set on this server.")
+            client = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
+            audio = b"".join(client.text_to_speech.convert(
+                voice, text="OxRide is ready to ride.",
+                model_id=os.environ.get("ELEVENLABS_MODEL") or "eleven_flash_v2_5",
+                output_format="mp3_44100_64"))
+            return done(ok=True, message=f"Got {len(audio) // 1024} KB of speech.",
+                        audio=base64.b64encode(audio).decode())
+
+        if name == "database":
+            import psycopg
+            with psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=5) as conn:
+                version = conn.execute("select version()").fetchone()[0]
+            return done(ok=True, message=f"Connected: {version.split(',')[0]}")
+
+        if name == "google_maps":
+            g, err = google_route((51.7535, -1.2700), (51.7534, -1.2540))
+            return done(ok=bool(g), message=err or f"Google route: {g['distance_m']} m")
+    except Exception as e:  # show what went wrong, cut short (never includes the key)
+        return done(ok=False, message=f"{type(e).__name__}: {str(e)[:300]}")
+
+
 @router.get("/profiles")
 def profiles() -> dict:
     # The current profiles plus every road type in the graph (by total length),
