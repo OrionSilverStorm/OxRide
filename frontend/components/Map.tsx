@@ -65,11 +65,11 @@ import { useVoice } from "@/hooks/useVoice";
 // The map fills the whole screen. Everything else floats on top of it in two layers,
 // so the map stays visible (and tappable) in the gaps between the controls:
 //
-//   Top layer     planning:   search bar (with the mic), ride-type chips, theme button
+//   Top layer     planning:   search bar, ride-type chips, theme button
 //                 navigating: green next-turn banner, then the theme and mute buttons
-//   Bottom layer  map credit and "my location" button (plus the big 72px mic while
-//                 navigating), then the bottom sheet: "Where to?", the chosen place
-//                 with Start, or the time left while riding
+//   Bottom layer  map credit, the big 72px mic in the middle, "my location" button,
+//                 then the bottom sheet once there is something to show: the chosen
+//                 place with Start, or the time left while riding
 //
 // Colours: this file only uses the theme's colour names (bg-card, text-primary,
 // text-foreground, ...), never colour codes. The names are defined in app/globals.css
@@ -458,9 +458,8 @@ export default function Map() {
       );
     });
 
-  // The mic: hold and speak ("chill ride to the Bodleian"), or tap once to keep listening.
-  // There are two mic buttons (small one in the search bar while planning, big 72px one
-  // while navigating); both get these same handlers so they behave identically.
+  // The mic (big round button, bottom middle): hold and speak ("chill ride to the
+  // Bodleian"), or tap once to keep listening. The listening logic is in hooks/useVoice.ts.
   const micProps = {
     onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => {
       e.currentTarget.setPointerCapture(e.pointerId); // still "held" if the finger slides off
@@ -479,7 +478,7 @@ export default function Map() {
 
   const status = voiceStatus || listening;
 
-  // What the voice command is doing right now: next to the mic (under the search bar, or above the big mic)
+  // What the voice command is doing right now, shown just above the mic
   const voiceBubble = (status || caption || voice.error) && (
     <div className="flex justify-center px-4">
       <div
@@ -545,8 +544,9 @@ export default function Map() {
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col gap-2 px-4 pt-[max(8px,env(safe-area-inset-top))]">
         {!nav && (
           <>
-            <div className="relative">
-              {/* Search bar: a rounded "pill" like Google Maps: icon, text box, clear, mic */}
+            {/* z-10: the suggestions list drops down over the ride-type chips, not under them */}
+            <div className="relative z-10">
+              {/* Search bar: a rounded "pill" like Google Maps: icon, text box, clear */}
               <div className="pointer-events-auto flex h-12 items-center gap-2 rounded-full bg-card pl-4 pr-1 shadow-md">
                 <Search className="size-5 shrink-0 text-muted-foreground" />
                 {/* 16px text: smaller makes iPhones zoom in on the page when you tap the box */}
@@ -567,20 +567,6 @@ export default function Map() {
                     <X className="size-5" />
                   </button>
                 )}
-                {/* Mic inside the search bar (planning only), as in Google Maps. Green icon
-                    when idle, filled green while listening. touch-none/select-none stop
-                    the phone scrolling or selecting text while you hold it */}
-                <button
-                  {...micProps}
-                  className={`relative flex size-10 shrink-0 touch-none select-none items-center justify-center rounded-full ${
-                    voice.mode !== "off"
-                      ? "bg-primary text-primary-foreground"
-                      : "text-primary"
-                  }`}
-                >
-                  {micPing}
-                  <Mic className="relative size-5" />
-                </button>
               </div>
               {/* Suggestions as you type: a card that drops down over the map */}
               {query.length >= 2 && results.length > 0 && (
@@ -622,8 +608,6 @@ export default function Map() {
                 )}
               </button>
             </div>
-            {/* "Listening… / Heard: … / reply" bubble, under the search bar near its mic */}
-            {voiceBubble}
           </>
         )}
 
@@ -688,18 +672,14 @@ export default function Map() {
           Same idea as the top layer: lets taps through except on its controls. The row
           of buttons sits on top of the sheet, so it moves up when the sheet grows. */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1000] flex flex-col gap-2">
-        {/* Voice bubble while navigating: just above the big mic */}
-        {nav && voiceBubble}
-        <div
-          className={`relative flex items-end justify-between px-4 ${nav ? "min-h-[72px]" : ""}`}
-        >
+        {/* "Listening… / Heard: … / reply" bubble, just above the mic */}
+        {voiceBubble}
+        {/* Row: map credit (left), mic (middle), my location (right) */}
+        <div className="relative flex min-h-[72px] items-end justify-between px-4">
           {/* Map credit: OpenStreetMap's licence requires it to stay visible, so we draw it
               here (Leaflet's own one would be hidden behind the sheet) */}
-          <p
-            className={`pointer-events-auto rounded-md bg-card/90 px-2 py-0.5 text-[10px] leading-tight text-foreground ${
-              nav ? "max-w-[calc(50%-52px)]" : "whitespace-nowrap" // wraps beside the big mic while riding
-            }`}
-          >
+          {/* max-w: wraps onto two lines so it never runs under the mic */}
+          <p className="pointer-events-auto max-w-[calc(50%-52px)] rounded-md bg-card/90 px-2 py-0.5 text-[10px] leading-tight text-foreground">
             &copy;{" "}
             <a
               href="https://www.openstreetmap.org/copyright"
@@ -711,16 +691,15 @@ export default function Map() {
             </a>{" "}
             contributors
           </p>
-          {/* While riding: the big 72px mic (planning has it in the search bar) */}
-          {nav && (
-            <button
-              {...micProps}
-              className="pointer-events-auto absolute bottom-0 left-1/2 flex size-[72px] -translate-x-1/2 touch-none select-none items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md"
-            >
-              {micPing}
-              <Mic className="relative size-8" />
-            </button>
-          )}
+          {/* The big 72px mic, centred. touch-none/select-none stop the phone scrolling
+              or selecting text while you hold it */}
+          <button
+            {...micProps}
+            className="pointer-events-auto absolute bottom-0 left-1/2 flex size-[72px] -translate-x-1/2 touch-none select-none items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md"
+          >
+            {micPing}
+            <Mic className="relative size-8" />
+          </button>
           {/* "My location" button, bottom right like Google Maps */}
           <button
             onClick={() => userPos && map?.flyTo(userPos, 16)} // Back to the blue dot
@@ -732,93 +711,92 @@ export default function Map() {
           </button>
         </div>
 
-        {/* Bottom sheet: rounded top corners, card colour. The bottom padding grows on
-            iPhones so the content stays above the home bar (safe-area-inset-bottom).
-            It shows one of three things: "Where to?", the chosen place, or the ride. */}
-        <div className="pointer-events-auto rounded-t-2xl bg-card px-4 pt-2 pb-[max(16px,env(safe-area-inset-bottom))] text-foreground shadow-md">
-          {/* Sheet handle: the small grey bar at the top, as in Google Maps */}
-          <div className="mx-auto mb-2 h-1 w-8 rounded-full bg-border" />
-          {/* 1. Nothing chosen yet */}
-          {!nav && !targetPos && (
-            <p className="pb-2 text-sm">
-              <span className="font-bold">Where to?</span> Search, tap the map,
-              or hold the mic and say it.
-            </p>
-          )}
-          {/* 2. A place is chosen: its name, the ride type, Start and clear (X) */}
-          {!nav && targetPos && (
-            <div className="flex flex-col gap-2">
-              <div>
-                <p className="truncate text-lg font-bold">
-                  {targetName ?? "Dropped pin"}
-                </p>
-                <p className="text-sm">
-                  {userPos
-                    ? `${profile[0].toUpperCase()}${profile.slice(1)} ride from your location`
-                    : "Finding your location…"}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => sendPositions()}
-                  disabled={!userPos}
-                  className="flex h-12 flex-1 items-center justify-center gap-2 rounded-full bg-primary text-base font-bold text-primary-foreground disabled:opacity-50"
-                >
-                  <Navigation className="size-5" />
-                  Start
-                </button>
-                <button
-                  onClick={() => {
-                    setTargetPos(null);
-                    setTargetName(null);
-                  }}
-                  aria-label="Clear destination"
-                  className="flex size-12 items-center justify-center rounded-full bg-surface text-foreground"
-                >
-                  <X className="size-5" />
-                </button>
-              </div>
-            </div>
-          )}
-          {/* 3. Navigating: exit (X), time left in the middle, when-to-leave hint, ride type */}
-          {nav && (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setNav(null)}
-                  aria-label="Exit navigation"
-                  className="flex size-12 shrink-0 items-center justify-center rounded-full bg-surface text-foreground"
-                >
-                  <X className="size-6" />
-                </button>
-                <div className="min-w-0 flex-1 text-center">
-                  <p className="text-2xl font-bold leading-tight">
-                    {Math.max(1, Math.round(secs / 60))} min
+        {/* No sheet: a gap under the row so the mic clears the iPhone home bar */}
+        {!nav && !targetPos && (
+          <div className="h-[max(16px,env(safe-area-inset-bottom))]" />
+        )}
+        {/* Bottom sheet: rounded top corners, card colour. Only there when it has
+            something to show (the chosen place, or the ride), so the map gets the room
+            otherwise. The bottom padding keeps it above the iPhone home bar. */}
+        {(nav || targetPos) && (
+          <div className="pointer-events-auto rounded-t-2xl bg-card px-4 pt-2 pb-[max(16px,env(safe-area-inset-bottom))] text-foreground shadow-md">
+            {/* Sheet handle: the small grey bar at the top, as in Google Maps */}
+            <div className="mx-auto mb-2 h-1 w-8 rounded-full bg-border" />
+            {/* A place is chosen: its name, the ride type, Start and clear (X) */}
+            {!nav && targetPos && (
+              <div className="flex flex-col gap-2">
+                <div>
+                  <p className="truncate text-lg font-bold">
+                    {targetName ?? "Dropped pin"}
                   </p>
                   <p className="text-sm">
-                    {fmt(left)} · arrive {eta}
+                    {userPos
+                      ? `${profile[0].toUpperCase()}${profile.slice(1)} ride from your location`
+                      : "Finding your location…"}
                   </p>
                 </div>
-                {/* Empty box as wide as the exit button, so the time stays centred */}
-                <div className="size-12 shrink-0" />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => sendPositions()}
+                    disabled={!userPos}
+                    className="flex h-12 flex-1 items-center justify-center gap-2 rounded-full bg-primary text-base font-bold text-primary-foreground disabled:opacity-50"
+                  >
+                    <Navigation className="size-5" />
+                    Start
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTargetPos(null);
+                      setTargetName(null);
+                    }}
+                    aria-label="Clear destination"
+                    className="flex size-12 items-center justify-center rounded-full bg-surface text-foreground"
+                  >
+                    <X className="size-5" />
+                  </button>
+                </div>
               </div>
-              {/* When to leave: only before you've really set off */}
-              {hint && (proj?.alongM ?? 0) < 100 && (
-                <p className="flex items-start gap-2 text-sm">
-                  <Clock className="size-5 shrink-0 text-warning" />
-                  {hint}
-                </p>
-              )}
-              {/* Change ride type mid-ride: re-plans from where the user is now */}
-              <div className="flex gap-2 pt-2">
-                {profileButtons((p) => {
-                  setProfile(p);
-                  sendPositions(p);
-                }, true)}
+            )}
+            {/* Navigating: exit (X), time left in the middle, when-to-leave hint, ride type */}
+            {nav && (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={() => setNav(null)}
+                    aria-label="Exit navigation"
+                    className="flex size-12 shrink-0 items-center justify-center rounded-full bg-surface text-foreground"
+                  >
+                    <X className="size-6" />
+                  </button>
+                  <div className="min-w-0 flex-1 text-center">
+                    <p className="text-2xl font-bold leading-tight">
+                      {Math.max(1, Math.round(secs / 60))} min
+                    </p>
+                    <p className="text-sm">
+                      {fmt(left)} · arrive {eta}
+                    </p>
+                  </div>
+                  {/* Empty box as wide as the exit button, so the time stays centred */}
+                  <div className="size-12 shrink-0" />
+                </div>
+                {/* When to leave: only before you've really set off */}
+                {hint && (proj?.alongM ?? 0) < 100 && (
+                  <p className="flex items-start gap-2 text-sm">
+                    <Clock className="size-5 shrink-0 text-warning" />
+                    {hint}
+                  </p>
+                )}
+                {/* Change ride type mid-ride: re-plans from where the user is now */}
+                <div className="flex gap-2 pt-2">
+                  {profileButtons((p) => {
+                    setProfile(p);
+                    sendPositions(p);
+                  }, true)}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

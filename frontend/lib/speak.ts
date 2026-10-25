@@ -2,10 +2,16 @@
 import { speak } from "./api";
 
 let speakingUntil = 0; // while the app is talking (plus a moment), the mic ignores what it hears
+const playing = new Set<() => void>(); // stop functions of everything being said right now
 
 /** True while the app's own voice is playing, so the mic doesn't take it as a command. */
 export function isSpeaking(): boolean {
   return Date.now() < speakingUntil;
+}
+
+/** Stop everything the app is saying (pressing the mic: the rider wants to talk). */
+export function stopSpeaking(): void {
+  playing.forEach((stop) => stop());
 }
 
 /** Say `text`. Returns a function that stops the sound. */
@@ -15,6 +21,7 @@ export function say(text: string): () => void {
   speakingUntil = Date.now() + 30_000; // until we know how long it is
   const done = () => {
     speakingUntil = Date.now() + 700; // echo dies down
+    playing.delete(stop); // finished: nothing left to stop
   };
   speak(text)
     .then((mp3) => {
@@ -32,10 +39,12 @@ export function say(text: string): () => void {
       u.onerror = done;
       window.speechSynthesis.speak(u);
     });
-  return () => {
+  const stop = () => {
     stopped = true;
     audio?.pause();
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     done();
   };
+  playing.add(stop);
+  return stop;
 }
