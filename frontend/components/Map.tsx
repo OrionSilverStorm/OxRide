@@ -1,8 +1,22 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { useState, useEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { MapContainer, TileLayer, Marker, Polyline, useMap, useMapEvents } from "react-leaflet";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Polyline,
+  useMap,
+  useMapEvents,
+} from "react-leaflet";
 
 import L from "leaflet";
 import {
@@ -26,8 +40,21 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { getRoute, searchPlace, sendVoice, type Maneuver, type RouteResult } from "@/lib/api";
-import { cumulativeM, currentStepIndex, ON_ROUTE, projectOnRoute, stepsAlongM, updateOffRoute } from "@/lib/nav";
+import {
+  getRoute,
+  searchPlace,
+  sendVoice,
+  type Maneuver,
+  type RouteResult,
+} from "@/lib/api";
+import {
+  cumulativeM,
+  currentStepIndex,
+  ON_ROUTE,
+  projectOnRoute,
+  stepsAlongM,
+  updateOffRoute,
+} from "@/lib/nav";
 import { say } from "@/lib/speak";
 import { useTheme } from "@/hooks/useTheme";
 import { useVoice } from "@/hooks/useVoice";
@@ -35,7 +62,11 @@ import { useVoice } from "@/hooks/useVoice";
 //define ride types
 type Profile = "chill" | "regular" | "fast";
 const PROFILES: Profile[] = ["fast", "regular", "chill"];
-const PROFILE_ICON: Record<Profile, LucideIcon> = { fast: Zap, regular: Bike, chill: Leaf };
+const PROFILE_ICON: Record<Profile, LucideIcon> = {
+  fast: Zap,
+  regular: Bike,
+  chill: Leaf,
+};
 
 // Arrow for each kind of turn (banner and "then" row)
 const MANEUVER_ICON: Record<Maneuver, LucideIcon> = {
@@ -125,7 +156,11 @@ function UserMarker({ pos, onFix, follow }: UserMarkerProps) {
     const onFound = (e: L.LocationEvent) => {
       if (OXFORD_BOUNDS.contains(e.latlng)) {
         // Only continue if inside Oxford bounds
-        onFixRef.current({ pos: e.latlng, accuracy: e.accuracy, time: e.timestamp }); // Save position so the marker renders
+        onFixRef.current({
+          pos: e.latlng,
+          accuracy: e.accuracy,
+          time: e.timestamp,
+        }); // Save position so the marker renders
         if (first.current) {
           first.current = false;
           map.flyTo(e.latlng, 16); // Animate the map to the user, zoom 16
@@ -134,9 +169,12 @@ function UserMarker({ pos, onFix, follow }: UserMarkerProps) {
     };
 
     // Register the listener, then ask the browser to keep sending the location
-    map
-      .on("locationfound", onFound)
-      .locate({ watch: true, enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+    map.on("locationfound", onFound).locate({
+      watch: true,
+      enableHighAccuracy: true,
+      maximumAge: 2000,
+      timeout: 20000,
+    });
 
     // Cleanup on unmount: remove listener and stop locating
     return () => {
@@ -177,7 +215,11 @@ export default function Map() {
   // Routing
   // One /route call gives the line, the stats and the turn-by-turn steps
   const [hint, setHint] = useState<string | null>(null); // "Leave in 20 min: ..." for the ride just planned
-  const sendPositions = async (p: Profile = profile, t: L.LatLng | null = targetPos, reroute = false) => {
+  const sendPositions = async (
+    p: Profile = profile,
+    t: L.LatLng | null = targetPos,
+    reroute = false,
+  ) => {
     if (!userPos || !t) return; // Need both points
     try {
       const data = await getRoute({
@@ -249,9 +291,15 @@ export default function Map() {
   //nav bar data
   // Where the user is along the route decides the current step and what's left
   const cum = useMemo(() => (nav ? cumulativeM(nav.route) : []), [nav]); // Metres from the start to each route point
-  const stepAlong = useMemo(() => (nav ? stepsAlongM(nav.route, cum, nav.steps) : []), [nav, cum]); // Where each step begins
+  const stepAlong = useMemo(
+    () => (nav ? stepsAlongM(nav.route, cum, nav.steps) : []),
+    [nav, cum],
+  ); // Where each step begins
   const total = cum.at(-1) ?? 0; // Route length in metres
-  const proj = nav && userPos ? projectOnRoute(nav.route, cum, [userPos.lat, userPos.lng]) : null; // User snapped onto the route
+  const proj =
+    nav && userPos
+      ? projectOnRoute(nav.route, cum, [userPos.lat, userPos.lng])
+      : null; // User snapped onto the route
   const i = proj ? currentStepIndex(stepAlong, proj.alongM) : 0; // The step the user is on now
   const step = nav?.steps[i]; // Current step object (undefined if nav is null); drives the top banner
 
@@ -271,7 +319,10 @@ export default function Map() {
   // A spoken command from the mic
   const [voiceStatus, setVoiceStatus] = useState<"" | "Thinking…">(""); // Shown above the mic
   // What it heard and what it answered, shown for a few seconds so a mishearing is obvious
-  const [caption, setCaption] = useState<{ heard: string; reply: string | null } | null>(null);
+  const [caption, setCaption] = useState<{
+    heard: string;
+    reply: string | null;
+  } | null>(null);
   const captionTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const showCaption = (heard: string, reply: string | null) => {
     clearTimeout(captionTimer.current);
@@ -312,15 +363,24 @@ export default function Map() {
   // The mic: hold to talk (sent when you let go), or tap once to keep listening until tapped again
   const voice = useVoice(handleCommand);
   const listening =
-    voice.mode === "hold" ? "Listening… let go to send" : voice.mode === "continuous" ? "Listening… tap the mic to stop" : "";
+    voice.mode === "hold"
+      ? "Listening… let go to send"
+      : voice.mode === "continuous"
+        ? "Listening… tap the mic to stop"
+        : "";
 
   // Off the route by more than ~30 m for a few seconds: plan again from here
   const off = useRef(ON_ROUTE);
   const lastReroute = useRef(0);
   useEffect(() => {
     if (!nav || !proj || !fix) return;
-    off.current = updateOffRoute(off.current, proj.distanceToRoute, fix.time, { accuracyM: fix.accuracy });
-    if (off.current.offRoute && Date.now() - lastReroute.current > REROUTE_GAP_MS) {
+    off.current = updateOffRoute(off.current, proj.distanceToRoute, fix.time, {
+      accuracyM: fix.accuracy,
+    });
+    if (
+      off.current.offRoute &&
+      Date.now() - lastReroute.current > REROUTE_GAP_MS
+    ) {
       lastReroute.current = Date.now();
       off.current = ON_ROUTE;
       sendPositions(profile, targetPos, true); // From the current position to the same destination
@@ -341,7 +401,10 @@ export default function Map() {
   const { theme, toggle: toggleTheme } = useTheme(!!nav);
 
   // Distance to the next maneuver, for the "then" row of the banner
-  const toNext = nav && i + 1 < stepAlong.length ? Math.max(0, stepAlong[i + 1] - (proj?.alongM ?? 0)) : null;
+  const toNext =
+    nav && i + 1 < stepAlong.length
+      ? Math.max(0, stepAlong[i + 1] - (proj?.alongM ?? 0))
+      : null;
   const next = nav?.steps[i + 1];
   const StepIcon = MANEUVER_ICON[step?.maneuver ?? "straight"];
   const NextIcon = MANEUVER_ICON[next?.maneuver ?? "arrive"];
@@ -387,7 +450,10 @@ export default function Map() {
   // What the voice command is doing right now: next to the mic (under the search bar, or above the big mic)
   const voiceBubble = (status || caption || voice.error) && (
     <div className="flex justify-center px-4">
-      <div aria-live="polite" className="max-w-xs rounded-2xl bg-card px-4 py-2 text-sm text-foreground shadow-md">
+      <div
+        aria-live="polite"
+        className="max-w-xs rounded-2xl bg-card px-4 py-2 text-sm text-foreground shadow-md"
+      >
         {status && <p className="font-bold">{status}</p>}
         {caption && <p>Heard: “{caption.heard}”</p>}
         {caption?.reply && <p>{caption.reply}</p>}
@@ -412,12 +478,27 @@ export default function Map() {
         zoomControl={false} // Pinch and scroll to zoom, like Google Maps on a phone
         attributionControl={false} // Drawn ourselves above the bottom sheet so it stays visible
       >
-        <TileLayer key={theme} url={TILES[theme]} maxZoom={19} className={theme === "dark" ? "tiles-dark" : ""} />
+        <TileLayer
+          key={theme}
+          url={TILES[theme]}
+          maxZoom={19}
+          className={theme === "dark" ? "tiles-dark" : ""}
+        />
         <UserMarker pos={userPos} onFix={setFix} follow={!!nav} />
         <TargetPin target={targetPos} setTarget={(p) => placeTarget(p)} />
         {/* The planned route: 6px primary line over a thin outline in the background colour */}
-        {route && <Polyline positions={route} pathOptions={{ className: "route-outline", weight: 9, opacity: 1 }} />}
-        {route && <Polyline positions={route} pathOptions={{ className: "route-line", weight: 6, opacity: 1 }} />}
+        {route && (
+          <Polyline
+            positions={route}
+            pathOptions={{ className: "route-outline", weight: 9, opacity: 1 }}
+          />
+        )}
+        {route && (
+          <Polyline
+            positions={route}
+            pathOptions={{ className: "route-line", weight: 6, opacity: 1 }}
+          />
+        )}
       </MapContainer>
 
       {/* ---- Top: search + ride type (planning) or the next-turn banner (navigating) ---- */}
@@ -448,7 +529,9 @@ export default function Map() {
                 <button
                   {...micProps}
                   className={`relative flex size-10 shrink-0 touch-none select-none items-center justify-center rounded-full ${
-                    voice.mode !== "off" ? "bg-primary text-primary-foreground" : "text-primary"
+                    voice.mode !== "off"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-primary"
                   }`}
                 >
                   {micPing}
@@ -465,7 +548,9 @@ export default function Map() {
                         className="flex min-h-12 w-full items-center gap-4 px-4 text-left text-base text-foreground"
                       >
                         <MapPin className="size-5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{h.properties.name ?? h.properties.street}</span>
+                        <span className="truncate">
+                          {h.properties.name ?? h.properties.street}
+                        </span>
                       </button>
                     </li>
                   ))}
@@ -477,11 +562,19 @@ export default function Map() {
               {profileButtons(setProfile)}
               <button
                 onClick={toggleTheme}
-                aria-label={theme === "dark" ? "Switch to light map" : "Switch to dark map"}
+                aria-label={
+                  theme === "dark"
+                    ? "Switch to light map"
+                    : "Switch to dark map"
+                }
                 title={theme === "dark" ? "Light map" : "Dark map"}
                 className={`${FAB} ml-auto`}
               >
-                {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
+                {theme === "dark" ? (
+                  <Sun className="size-5" />
+                ) : (
+                  <Moon className="size-5" />
+                )}
               </button>
             </div>
             {voiceBubble}
@@ -493,14 +586,20 @@ export default function Map() {
             {/* Current instruction */}
             <div className="flex items-start gap-4 bg-primary px-4 py-2 text-primary-foreground">
               <StepIcon className="mt-1 size-8 shrink-0" strokeWidth={2.5} />
-              <p className="text-[28px] font-bold leading-tight">{step?.text}</p>
+              <p className="text-[28px] font-bold leading-tight">
+                {step?.text}
+              </p>
             </div>
             {/* What comes after it */}
             <div className="flex items-center gap-2 bg-card px-4 py-2 text-sm text-foreground">
               <span>Then</span>
               <NextIcon className="size-4 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">{next?.text ?? "arrive"}</span>
-              {toNext !== null && <span className="shrink-0">in {fmt(toNext)}</span>}
+              <span className="min-w-0 flex-1 truncate">
+                {next?.text ?? "arrive"}
+              </span>
+              {toNext !== null && (
+                <span className="shrink-0">in {fmt(toNext)}</span>
+              )}
             </div>
           </div>
         )}
@@ -510,18 +609,28 @@ export default function Map() {
           <div className="flex flex-col items-end gap-2">
             <button
               onClick={toggleTheme}
-              aria-label={theme === "dark" ? "Switch to light map" : "Switch to dark map"}
+              aria-label={
+                theme === "dark" ? "Switch to light map" : "Switch to dark map"
+              }
               title={theme === "dark" ? "Light map" : "Dark map"}
               className={FAB}
             >
-              {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
+              {theme === "dark" ? (
+                <Sun className="size-5" />
+              ) : (
+                <Moon className="size-5" />
+              )}
             </button>
             <button
               onClick={() => setVoiceOn((v) => !v)} // Click = user gesture, so the browser allows audio
               aria-label={voiceOn ? "Mute directions" : "Speak directions"}
               className={FAB}
             >
-              {voiceOn ? <Volume2 className="size-5" /> : <VolumeX className="size-5" />}
+              {voiceOn ? (
+                <Volume2 className="size-5" />
+              ) : (
+                <VolumeX className="size-5" />
+              )}
             </button>
           </div>
         )}
@@ -530,13 +639,23 @@ export default function Map() {
       {/* ---- Bottom: attribution, mic, my location, then the sheet ---- */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1000] flex flex-col gap-2">
         {nav && voiceBubble}
-        <div className={`relative flex items-end justify-between px-4 ${nav ? "min-h-[72px]" : ""}`}>
+        <div
+          className={`relative flex items-end justify-between px-4 ${nav ? "min-h-[72px]" : ""}`}
+        >
           <p
             className={`pointer-events-auto rounded-md bg-card/90 px-2 py-0.5 text-[10px] leading-tight text-foreground ${
               nav ? "max-w-[calc(50%-52px)]" : "whitespace-nowrap" // wraps beside the big mic while riding
             }`}
           >
-            &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline">OpenStreetMap</a>{" "}
+            &copy;{" "}
+            <a
+              href="https://www.openstreetmap.org/copyright"
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              OpenStreetMap
+            </a>{" "}
             contributors
           </p>
           {/* While riding: the big 72px mic (planning has it in the search bar) */}
@@ -560,20 +679,24 @@ export default function Map() {
         </div>
 
         <div className="pointer-events-auto rounded-t-2xl bg-card px-4 pt-2 pb-[max(16px,env(safe-area-inset-bottom))] text-foreground shadow-md">
-          <div className="mx-auto mb-2 h-1 w-8 rounded-full bg-border" /> {/* sheet handle */}
-
+          <div className="mx-auto mb-2 h-1 w-8 rounded-full bg-border" />{" "}
+          {/* sheet handle */}
           {!nav && !targetPos && (
             <p className="pb-2 text-sm">
-              <span className="font-bold">Where to?</span> Search, tap the map, or hold the mic and say it.
+              <span className="font-bold">Where to?</span> Search, tap the map,
+              or hold the mic and say it.
             </p>
           )}
-
           {!nav && targetPos && (
             <div className="flex flex-col gap-2">
               <div>
-                <p className="truncate text-lg font-bold">{targetName ?? "Dropped pin"}</p>
+                <p className="truncate text-lg font-bold">
+                  {targetName ?? "Dropped pin"}
+                </p>
                 <p className="text-sm">
-                  {userPos ? `${profile[0].toUpperCase()}${profile.slice(1)} ride from your location` : "Finding your location…"}
+                  {userPos
+                    ? `${profile[0].toUpperCase()}${profile.slice(1)} ride from your location`
+                    : "Finding your location…"}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -598,7 +721,6 @@ export default function Map() {
               </div>
             </div>
           )}
-
           {nav && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-4">
@@ -610,12 +732,15 @@ export default function Map() {
                   <X className="size-6" />
                 </button>
                 <div className="min-w-0 flex-1 text-center">
-                  <p className="text-2xl font-bold leading-tight">{Math.max(1, Math.round(secs / 60))} min</p>
+                  <p className="text-2xl font-bold leading-tight">
+                    {Math.max(1, Math.round(secs / 60))} min
+                  </p>
                   <p className="text-sm">
                     {fmt(left)} · arrive {eta}
                   </p>
                 </div>
-                <div className="size-12 shrink-0" /> {/* balances the exit button so the time stays centred */}
+                <div className="size-12 shrink-0" />{" "}
+                {/* balances the exit button so the time stays centred */}
               </div>
               {/* When to leave: only before you've really set off */}
               {hint && (proj?.alongM ?? 0) < 100 && (
