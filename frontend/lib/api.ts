@@ -57,6 +57,8 @@ export interface VoiceResult {
   // new_route: end (+ end_name) found from the place the rider named; start = their position
   settings: Partial<RouteRequest> & { end_name?: string };
   reply: string;
+  heard?: string; // what Gemini heard, when it was sent a recording
+  error?: string; // only when Gemini failed: why (for the voice log)
 }
 
 /** One 15-minute departure option from /best-departure. */

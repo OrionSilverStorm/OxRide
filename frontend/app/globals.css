@@ -193,7 +193,9 @@
    Leaflet draws the route line and markers itself, so they are styled here with the
    same colour variables, which makes them follow the theme too. */
 
-.leaflet-container {
+/* "html" in front so this beats leaflet.css, which loads later (its light grey would
+   flash behind the tiles in dark mode) */
+html .leaflet-container {
   background: var(--background);
   font-family: inherit;
 }

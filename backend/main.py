@@ -196,13 +196,15 @@ def voice(req: VoiceRequest) -> dict:
             except Exception as e:
                 print(f"WARNING: place search failed ({e!r})")
         if not hits:
-            return {"action": "answer", "settings": {},
+            return {"action": "answer", "settings": {}, "heard": result.get("heard"),
                     "reply": f"Sorry, I couldn't find {place or 'that place'} in Oxford."}
         settings["end"] = [hits[0]["lat"], hits[0]["lon"]]
         settings["end_name"] = hits[0]["name"]
     if req.position and result["action"] in ("new_route", "reroute"):
         settings["start"] = list(req.position)
-    return {"action": result["action"], "settings": settings, "reply": result["reply"]}
+    # heard: what Gemini heard (the app shows it, most useful when it was sent a recording)
+    return {"action": result["action"], "settings": settings, "reply": result["reply"],
+            "heard": result.get("heard")}
 
 
 @app.post("/speak")

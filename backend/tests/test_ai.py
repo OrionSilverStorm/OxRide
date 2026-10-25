@@ -261,6 +261,14 @@ def test_voice_new_route_finds_the_place(client, fake_gemini, monkeypatch):
     assert body["reply"] == "Quiet route to the Radcliffe Camera."
 
 
+def test_voice_returns_what_gemini_heard(client, fake_gemini):
+    # With a recording the app has no transcript of its own, so Gemini's goes on screen
+    fake_gemini.reply = {"action": "answer", "heard": "how long left", "reply": "About six minutes."}
+    body = client.post("/voice", json={"audio_b64": base64.b64encode(b"x").decode(),
+                                       "mime": "audio/wav"}).json()
+    assert body["heard"] == "how long left" and body["reply"] == "About six minutes."
+
+
 def test_voice_unknown_place_is_a_polite_answer(client, fake_gemini, monkeypatch):
     fake_gemini.reply = {"action": "new_route", "settings": {"destination": "Atlantis"}, "reply": "Off we go."}
     monkeypatch.setattr(ai, "search_place", lambda q: [])

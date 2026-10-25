@@ -51,11 +51,13 @@ frontend/
   app/navigate/    placeholder (navigation currently happens in Map.tsx)
   app/debug/       routing debug panel (components/debug/)
   components/      Map (search, ride type, route, directions banner, voice command, mute), placeholders
-  hooks/           useVoice (mic: hold to talk, or tap to keep listening), useTheme (light/dark + toggle); the others are placeholders
+  hooks/           useVoice (mic: hold to talk, or tap to keep listening; speech-to-text or record-for-Gemini engine), useTheme (light/dark + toggle); the others are placeholders
   lib/api.ts       calls to the backend
   lib/nav.ts       where the rider is along the route: current step, distance left, off route (+ nav.test.ts)
   lib/speak.ts     say(): ElevenLabs via /speak, browser voice fallback; isSpeaking() so the mic ignores the app; stopSpeaking()
   lib/heard.ts     what the mic heard -> what to send (iPhones don't mark sentences finished) (+ heard.test.ts)
+  lib/voiceLog.ts  mic debug log, shown on the phone with ?voicelog (components/VoiceLog.tsx); mic engine switch
+  lib/recorder.ts  record engine: records the mic, converts to 16 kHz WAV (lib/wav.ts, + wav.test.ts) for Gemini
   lib/theme.ts     which Everforest palette shows: phone setting, dark while navigating, manual toggle (+ theme.test.ts)
   lib/mock.ts      fake data until the backend is ready
   scripts/         dev-api.mjs (cross-platform backend start), test.mjs (npm test)
@@ -257,8 +259,8 @@ Follow the phone's setting by default. Switch to dark automatically from sunset 
 - Mobile first, 390px wide. The map fills the screen and the controls float over it.
 - Bottom sheet for planning. A banner at the top for the next turn while navigating.
 - Rounded corners (rounded-2xl on cards), one soft shadow level, 8px spacing grid.
-- Font: Inter. Next-turn text is 28 to 32px bold, secondary text 14 to 16px.
-- Every button has a tap area of at least 48px (map buttons and ride-type chips are drawn at 36 to 40px with a 48px tap area, `.tap-48`). The push-to-talk button is 72px, centred at the bottom on both screens, and it pulses while listening. The bottom sheet only appears when it has something to show (a chosen place, or the ride).
+- Font: Inter. Next-turn text is 20px bold (kept compact so the map stays visible), secondary text 14 to 16px.
+- Every button has a tap area of at least 48px (map buttons and ride-type chips are drawn at 36 to 40px with a 48px tap area, `.tap-48`). The push-to-talk button is 56px, centred at the bottom on both screens, and it pulses while listening. Mute (both screens) silences directions and replies, so ElevenLabs isn't called; replies still show on screen. The bottom sheet only appears when it has something to show (a chosen place, or the ride).
 - Route line is 6px in the primary colour with a thin outline in the background colour. Alternative routes are muted grey.
 - Charts use one colour with no gridlines. The best departure slot is highlighted in the warning colour.
 - Map tiles: OpenStreetMap in both palettes, darkened with a CSS filter (`.tiles-dark`) in the dark one (CARTO's tiles now need an API key). Keep the OpenStreetMap attribution visible.

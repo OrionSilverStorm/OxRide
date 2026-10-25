@@ -58,6 +58,8 @@ import {
 import { say } from "@/lib/speak";
 import { useTheme } from "@/hooks/useTheme";
 import { useVoice } from "@/hooks/useVoice";
+import { vlog } from "@/lib/voiceLog";
+import VoiceLog from "@/components/VoiceLog";
 
 // ---------------------------------------------------------------------------------------
 // How this screen is built (Everforest colours, Google Maps-style layout)
@@ -67,7 +69,7 @@ import { useVoice } from "@/hooks/useVoice";
 //
 //   Top layer     planning:   search bar, ride-type chips, theme button
 //                 navigating: green next-turn banner, then the theme and mute buttons
-//   Bottom layer  map credit, the big 72px mic in the middle, "my location" button,
+//   Bottom layer  map credit, the 56px mic in the middle, "my location" button,
 //                 then the bottom sheet once there is something to show: the chosen
 //                 place with Start, or the time left while riding
 //
@@ -221,7 +223,9 @@ export default function Map() {
   //nav settings
   const [nav, setNav] = useState<RouteResult | null>(null); // The ride from /route; non-null = navigation mode
   const route = nav?.route ?? null; // Route as [lat, lon] points, drawn on the map
-  const [voiceOn, setVoiceOn] = useState(true); // Spoken directions, on by default (the button mutes them)
+  // Voice on (default) or muted. Muted = nothing is spoken (directions or replies), so
+  // ElevenLabs is never called; replies still show in the bubble above the mic
+  const [voiceOn, setVoiceOn] = useState(true);
   //////////////////////////////////////////////////////////////////////////
 
   const [targetName, setTargetName] = useState<string | null>(null); // "Radcliffe Camera"; null = tapped on the map
@@ -351,26 +355,43 @@ export default function Map() {
     setCaption({ heard, reply });
     if (reply) captionTimer.current = setTimeout(() => setCaption(null), 8000);
   };
-  const handleCommand = async (text: string) => {
+  // What the rider said goes to /voice: as text (speech-to-text engine) or as a recording
+  // that Gemini listens to itself (record engine, see the ?voicelog panel)
+  const askOxRide = async (
+    input: { text: string } | { audio_b64: string; mime: string },
+  ) => {
+    const said = "text" in input ? input.text : "…";
     let r;
     setVoiceStatus("Thinking…");
-    showCaption(text, null);
+    showCaption(said, null);
+    vlog(
+      "text" in input
+        ? `/voice: sending "${input.text}"`
+        : `/voice: sending a ${Math.round((input.audio_b64.length * 0.75) / 1024)} KB recording`,
+    );
     try {
       // Gemini (via /voice) works out the place and ride type, and finds the place's coordinates
       r = await sendVoice({
-        text,
+        ...input,
         position: userPos ? [userPos.lat, userPos.lng] : undefined,
         route: nav ?? undefined,
       });
-    } catch {
-      showCaption(text, "Sorry, I couldn't reach OxRide.");
-      say("Sorry, I couldn't reach OxRide.");
+    } catch (e) {
+      vlog(`/voice: failed (${e instanceof Error ? e.message : e})`);
+      showCaption(said, "Sorry, I couldn't reach OxRide.");
+      if (voiceOn) say("Sorry, I couldn't reach OxRide.");
       return;
     } finally {
       setVoiceStatus("");
     }
-    showCaption(text, r.reply);
-    say(r.reply); // Spoken reply (ElevenLabs): the user just asked, so it's not muted
+    // "error" is only there when Gemini failed (quota, wrong model...): the reason why
+    vlog(
+      `/voice: ${r.action}, "${r.reply}"` +
+        (r.heard ? `, heard "${r.heard}"` : "") +
+        (r.error ? ` [error: ${r.error}]` : ""),
+    );
+    showCaption(r.heard ?? said, r.reply);
+    if (voiceOn) say(r.reply); // Spoken reply (ElevenLabs), unless muted
     const p = (r.settings.profile as Profile | undefined) ?? profile;
     if (r.settings.profile) setProfile(p); // Highlight chill/regular/fast
     if (r.action === "new_route" && r.settings.end) {
@@ -383,12 +404,16 @@ export default function Map() {
     }
   };
   // The mic: hold to talk (sent when you let go), or tap once to keep listening until tapped again
-  const voice = useVoice(handleCommand);
+  const voice = useVoice(
+    (text) => askOxRide({ text }),
+    (audio_b64, mime) => askOxRide({ audio_b64, mime }),
+  );
+  const doing = voice.engine === "record" ? "Recording" : "Listening";
   const listening =
     voice.mode === "hold"
-      ? "Listening… let go to send"
+      ? `${doing}… let go to send`
       : voice.mode === "continuous"
-        ? "Listening… tap the mic to stop"
+        ? `${doing}… tap the mic to ${voice.engine === "record" ? "send" : "stop"}`
         : "";
 
   // Off the route by more than ~30 m for a few seconds: plan again from here
@@ -522,17 +547,23 @@ export default function Map() {
         />
         <UserMarker pos={userPos} onFix={setFix} follow={!!nav} />
         <TargetPin target={targetPos} setTarget={(p) => placeTarget(p)} />
-        {/* The planned route: 6px primary line over a thin outline in the background colour */}
+        {/* The planned route: 6px primary line over a thin outline in the background colour.
+            className is a direct prop: Leaflet only reads it when the line is first drawn
+            (inside pathOptions it is ignored and the line comes out Leaflet's default blue) */}
         {route && (
           <Polyline
             positions={route}
-            pathOptions={{ className: "route-outline", weight: 9, opacity: 1 }}
+            className="route-outline"
+            weight={9}
+            opacity={1}
           />
         )}
         {route && (
           <Polyline
             positions={route}
-            pathOptions={{ className: "route-line", weight: 6, opacity: 1 }}
+            className="route-line"
+            weight={6}
+            opacity={1}
           />
         )}
       </MapContainer>
@@ -611,16 +642,14 @@ export default function Map() {
           </>
         )}
 
-        {/* Next-turn banner (navigating): Google-style green box with a big turn arrow and
-            28px bold text, readable at a glance on a bike, then a "Then ..." row below */}
+        {/* Next-turn banner (navigating): Google-style green box with the turn arrow and
+            the instruction in bold, kept compact so the map stays visible, then "Then ..." */}
         {nav && (
           <div className="pointer-events-auto overflow-hidden rounded-2xl shadow-md">
             {/* Current instruction */}
-            <div className="flex items-start gap-4 bg-primary px-4 py-2 text-primary-foreground">
-              <StepIcon className="mt-1 size-8 shrink-0" strokeWidth={2.5} />
-              <p className="text-[28px] font-bold leading-tight">
-                {step?.text}
-              </p>
+            <div className="flex items-center gap-3 bg-primary px-4 py-2 text-primary-foreground">
+              <StepIcon className="size-6 shrink-0" strokeWidth={2.5} />
+              <p className="text-xl font-bold leading-snug">{step?.text}</p>
             </div>
             {/* What comes after it */}
             <div className="flex items-center gap-2 bg-card px-4 py-2 text-sm text-foreground">
@@ -636,9 +665,10 @@ export default function Map() {
           </div>
         )}
 
-        {/* Right-hand map buttons under the banner while navigating */}
-        {nav && (
-          <div className="flex flex-col items-end gap-2">
+        {/* Right-hand map buttons: under the banner while navigating (theme + mute), under
+            the chips while planning (mute; the theme button is in the chip row) */}
+        <div className="flex flex-col items-end gap-2">
+          {nav && (
             <button
               onClick={toggleTheme}
               aria-label={
@@ -653,19 +683,22 @@ export default function Map() {
                 <Moon className="size-5" />
               )}
             </button>
-            <button
-              onClick={() => setVoiceOn((v) => !v)} // Click = user gesture, so the browser allows audio
-              aria-label={voiceOn ? "Mute directions" : "Speak directions"}
-              className={FAB}
-            >
-              {voiceOn ? (
-                <Volume2 className="size-5" />
-              ) : (
-                <VolumeX className="size-5" />
-              )}
-            </button>
-          </div>
-        )}
+          )}
+          {/* Mute: no spoken directions or replies, so no ElevenLabs calls (replies still
+                show on screen) */}
+          <button
+            onClick={() => setVoiceOn((v) => !v)} // Click = user gesture, so the browser allows audio
+            aria-label={voiceOn ? "Mute voice" : "Turn voice on"}
+            title={voiceOn ? "Mute voice" : "Turn voice on"}
+            className={FAB}
+          >
+            {voiceOn ? (
+              <Volume2 className="size-5" />
+            ) : (
+              <VolumeX className="size-5" />
+            )}
+          </button>
+        </div>
       </div>
 
       {/* ---- Bottom layer: map credit, mic, my location, then the bottom sheet ----
@@ -675,11 +708,11 @@ export default function Map() {
         {/* "Listening… / Heard: … / reply" bubble, just above the mic */}
         {voiceBubble}
         {/* Row: map credit (left), mic (middle), my location (right) */}
-        <div className="relative flex min-h-[72px] items-end justify-between px-4">
+        <div className="relative flex min-h-14 items-end justify-between px-4">
           {/* Map credit: OpenStreetMap's licence requires it to stay visible, so we draw it
               here (Leaflet's own one would be hidden behind the sheet) */}
           {/* max-w: wraps onto two lines so it never runs under the mic */}
-          <p className="pointer-events-auto max-w-[calc(50%-52px)] rounded-md bg-card/90 px-2 py-0.5 text-[10px] leading-tight text-foreground">
+          <p className="pointer-events-auto max-w-[calc(50%-44px)] rounded-md bg-card/90 px-2 py-0.5 text-[10px] leading-tight text-foreground">
             &copy;{" "}
             <a
               href="https://www.openstreetmap.org/copyright"
@@ -691,14 +724,14 @@ export default function Map() {
             </a>{" "}
             contributors
           </p>
-          {/* The big 72px mic, centred. touch-none/select-none stop the phone scrolling
+          {/* The 56px mic, centred. touch-none/select-none stop the phone scrolling
               or selecting text while you hold it */}
           <button
             {...micProps}
-            className="pointer-events-auto absolute bottom-0 left-1/2 flex size-[72px] -translate-x-1/2 touch-none select-none items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md"
+            className="pointer-events-auto absolute bottom-0 left-1/2 flex size-14 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md"
           >
             {micPing}
-            <Mic className="relative size-8" />
+            <Mic className="relative size-6" />
           </button>
           {/* "My location" button, bottom right like Google Maps */}
           <button
@@ -798,6 +831,9 @@ export default function Map() {
           </div>
         )}
       </div>
+
+      {/* Mic debug log, only with ?voicelog in the address (components/VoiceLog.tsx) */}
+      <VoiceLog />
     </div>
   );
 }

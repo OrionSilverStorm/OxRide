@@ -133,6 +133,7 @@ settings.destination (new_route only): a place name that a map search of Oxford 
 settings.profile: "fast", "regular" or "chill", only if they ask for faster or quieter.
 settings.depart_at: only if they say when they'll leave, as local time "YYYY-MM-DDTHH:MM".
 reply: one or two short spoken sentences. No lists, no emoji, no markdown.
+heard: what the rider said, word for word, as plain text (shown on screen so they can see a mishearing).
 Use the context (time, position, current route) to answer questions."""
 
 SCHEMA = {
@@ -149,6 +150,7 @@ SCHEMA = {
             },
         },
         "reply": {"type": "string"},
+        "heard": {"type": "string"},
     },
 }
 
