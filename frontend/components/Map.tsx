@@ -13,10 +13,11 @@ import {
 } from "react-leaflet";
 
 import L from "leaflet";
-import { Ear, EarOff, LocateFixed, Mic, Volume2, VolumeX } from "lucide-react";
-import { getRoute, searchPlace, sendVoice, speak, type RouteResult } from "@/lib/api";
+import { LocateFixed, Mic, Volume2, VolumeX } from "lucide-react";
+import { getRoute, searchPlace, sendVoice, type RouteResult } from "@/lib/api";
 import { cumulativeM, currentStepIndex, ON_ROUTE, projectOnRoute, stepsAlongM, updateOffRoute } from "@/lib/nav";
-import { parseWake } from "@/lib/voice";
+import { say } from "@/lib/speak";
+import { useVoice } from "@/hooks/useVoice";
 
 //define ride types
 type Profile = "chill" | "regular" | "fast";
@@ -49,66 +50,6 @@ interface Fix {
 }
 
 const REROUTE_GAP_MS = 8000; // don't ask for a new route more often than this
-
-// Speak with ElevenLabs (via /speak); the browser's own voice if that fails.
-// Returns a function that stops the sound.
-function say(text: string): () => void {
-  let stopped = false;
-  let audio: HTMLAudioElement | undefined;
-  speak(text)
-    .then((mp3) => {
-      if (stopped) return; // Don't play outdated audio
-      audio = new Audio(URL.createObjectURL(mp3));
-      return audio.play();
-    })
-    .catch(() => {
-      if (stopped || !("speechSynthesis" in window)) return;
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = "en-GB";
-      window.speechSynthesis.speak(u);
-    });
-  return () => {
-    stopped = true;
-    audio?.pause();
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-  };
-}
-
-// The bits of the browser's SpeechRecognition API we use
-interface SpeechRec {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  start: () => void;
-  stop: () => void;
-  onresult: (e: {
-    resultIndex: number;
-    results: { length: number; [i: number]: { isFinal: boolean; [j: number]: { transcript: string } } };
-  }) => void;
-  onend: (() => void) | null;
-  onerror: ((e: { error: string }) => void) | null;
-}
-
-// Browser speech-to-text (Chrome/Safari), or null if this browser has none. Needs HTTPS or localhost
-function speechRecognition(): (new () => SpeechRec) | null {
-  if (typeof window === "undefined") return null;
-  const w = window as unknown as { SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec };
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
-}
-
-// Short beep: "I heard Hey OxRide, go on"
-function beep() {
-  try {
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    osc.frequency.value = 880;
-    osc.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.15);
-  } catch {
-    // no sound available: the command still works
-  }
-}
 
 const OXFORD_CENTER: [number, number] = [51.752, -1.2577];
 const OXFORD_BOUNDS = L.latLngBounds([51.69, -1.37], [51.82, -1.14]);
@@ -329,74 +270,10 @@ export default function Map() {
       sendPositions(p); // Same destination, new way (e.g. "quieter please")
     }
   };
-  const handleRef = useRef(handleCommand); // Latest version for the long-running listener below
-  useEffect(() => {
-    handleRef.current = handleCommand;
-  });
-
-  // Tap the mic once and speak: it stops by itself when you stop talking
-  const listen = () => {
-    const SR = speechRecognition();
-    if (!SR) return alert("Speech recognition not supported");
-    const rec = new SR();
-    rec.lang = "en-GB";
-    rec.onresult = (e) => handleRef.current(e.results[0][0].transcript); // What the user said
-    // Heard nothing (or an error): stop showing "Listening…" (a result already switched it to "Thinking…")
-    rec.onend = () => setVoiceStatus((s) => (s === "Listening…" ? "" : s));
-    rec.onerror = () => setVoiceStatus((s) => (s === "Listening…" ? "" : s));
-    setVoiceStatus("Listening…");
-    rec.start(); // Starts listening
-  };
-
-  // Hands-free: keep listening and react only to "Hey OxRide ..." (no buttons while cycling)
-  const [handsFree, setHandsFree] = useState(false);
-  useEffect(() => {
-    const SR = speechRecognition();
-    if (!handsFree || !SR) return;
-    const rec = new SR();
-    rec.lang = "en-GB";
-    rec.continuous = true; // Don't stop after one sentence
-    rec.interimResults = false; // Only finished sentences
-    let stopped = false;
-    let waitUntil = 0; // After a bare "Hey OxRide", the next sentence is the command
-    rec.onresult = (e) => {
-      for (let k = e.resultIndex; k < e.results.length; k++) {
-        if (!e.results[k].isFinal) continue;
-        const text = e.results[k][0].transcript;
-        if (Date.now() < waitUntil) {
-          waitUntil = 0;
-          handleRef.current(text);
-          continue;
-        }
-        const wake = parseWake(text);
-        if (!wake.heard) continue; // Ordinary talk: ignore
-        if (wake.command) handleRef.current(wake.command);
-        else {
-          beep();
-          waitUntil = Date.now() + 8000;
-          setVoiceStatus("Listening…"); // Waiting for the command after "Hey OxRide"
-          setTimeout(() => setVoiceStatus((s) => (s === "Listening…" ? "" : s)), 8000);
-        }
-      }
-    };
-    // Browsers stop listening every so often: start again until switched off
-    rec.onend = () => {
-      if (stopped) return;
-      try {
-        rec.start();
-      } catch {
-        // already started
-      }
-    };
-    rec.onerror = (e) => {
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") stopped = true; // No mic permission
-    };
-    rec.start();
-    return () => {
-      stopped = true;
-      rec.stop();
-    };
-  }, [handsFree]);
+  // The mic: hold to talk (sent when you let go), or tap once to keep listening until tapped again
+  const voice = useVoice(handleCommand);
+  const listening =
+    voice.mode === "hold" ? "Listening… let go to send" : voice.mode === "continuous" ? "Listening… tap the mic to stop" : "";
 
   // Off the route by more than ~30 m for a few seconds: plan again from here
   const off = useRef(ON_ROUTE);
@@ -593,39 +470,36 @@ export default function Map() {
         <LocateFixed className="size-5" />
       </button>
       <button
-        onClick={listen} // Press, then speak: "chill ride to the Bodleian"
-        disabled={handsFree} // Hands-free is already listening
+        // Hold and speak ("chill ride to the Bodleian"), or tap once to keep listening
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId); // still "held" if the finger slides off
+          voice.press();
+        }}
+        onPointerUp={voice.release}
+        onPointerCancel={voice.release}
+        onContextMenu={(e) => e.preventDefault()} // no long-press menu on phones
         aria-label="Speak a command"
-        className={`absolute left-3 z-[1000] rounded bg-white px-3 py-2 shadow disabled:opacity-50 ${nav ? "bottom-56" : "bottom-36"}`}
+        aria-pressed={voice.mode !== "off"}
+        className={`absolute left-3 z-[1000] touch-none select-none rounded px-3 py-2 shadow ${
+          voice.mode === "off" ? "bg-white" : "bg-blue-600 text-white"
+        } ${voice.mode === "continuous" ? "animate-pulse" : ""} ${nav ? "bottom-56" : "bottom-36"}`}
       >
         <Mic className="size-5" />
       </button>
       {/* What the voice command is doing right now */}
-      {(voiceStatus || caption) && (
+      {(voiceStatus || listening || caption || voice.error) && (
         <div
           aria-live="polite"
           className={`absolute left-16 right-3 z-[1000] max-w-xs rounded-2xl bg-neutral-900 px-3 py-2 text-sm text-white shadow ${
             nav ? "bottom-56" : "bottom-36"
           }`}
         >
-          {voiceStatus && <p className="font-semibold">{voiceStatus}</p>}
+          {(voiceStatus || listening) && <p className="font-semibold">{voiceStatus || listening}</p>}
+          {voice.error && <p className="text-red-300">{voice.error}</p>}
           {caption && <p className="opacity-70">Heard: “{caption.heard}”</p>}
           {caption?.reply && <p>{caption.reply}</p>}
         </div>
       )}
-      <button
-        onClick={() => {
-          if (!handsFree && !speechRecognition()) return alert("Speech recognition not supported");
-          setHandsFree((v) => !v);
-        }}
-        aria-label={handsFree ? "Stop listening for Hey OxRide" : "Listen for Hey OxRide"}
-        title={handsFree ? "Listening for \"Hey OxRide\"" : "Hands-free: say \"Hey OxRide\""}
-        className={`absolute left-3 z-[1000] rounded px-3 py-2 shadow ${
-          handsFree ? "bg-blue-600 text-white" : "bg-white"
-        } ${nav ? "bottom-[17rem]" : "bottom-52"}`}
-      >
-        {handsFree ? <Ear className="size-5" /> : <EarOff className="size-5" />}
-      </button>
     </div>
   );
 }

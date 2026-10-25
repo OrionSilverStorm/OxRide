@@ -1,6 +1,167 @@
-import type { VoiceResult } from "@/lib/api";
+"use client";
 
-/** Push-to-talk: records the mic, sends it to /voice, speaks the reply (ElevenLabs, Web Speech fallback). */
-export function useVoice(): { listening: boolean; start: () => void; stop: () => Promise<VoiceResult | null> } {
-  return { listening: false, start: () => {}, stop: async () => null };
+// The mic button:
+//   hold   -> listens while held, sends what you said when you let go
+//   tap    -> keeps listening; every sentence is a command; tap again to stop
+// Uses the browser's speech-to-text (Chrome/Safari; needs HTTPS or localhost).
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { isSpeaking } from "@/lib/speak";
+
+export type VoiceMode = "off" | "hold" | "continuous";
+
+const HOLD_MS = 350; // pressed longer than this = hold-to-talk; shorter = a tap
+
+// The bits of the browser's SpeechRecognition API we use
+interface SpeechRec {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onresult:
+    | ((e: {
+        resultIndex: number;
+        results: { length: number; [i: number]: { isFinal: boolean; [j: number]: { transcript: string } } };
+      }) => void)
+    | null;
+  onend: (() => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+}
+
+function recognizer(): (new () => SpeechRec) | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as { SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
+const MIC_ERRORS: Record<string, string> = {
+  "not-allowed": "Microphone blocked: allow it in the browser's site settings.",
+  "service-not-allowed": "Speech recognition isn't allowed in this browser.",
+  "audio-capture": "No microphone found.",
+  network: "Speech recognition needs an internet connection.",
+};
+
+/** `onCommand` gets each thing the rider said. `error` explains why the mic stopped, if it did. */
+export function useVoice(onCommand: (text: string) => void) {
+  const [mode, setMode] = useState<VoiceMode>("off");
+  const [error, setError] = useState<string | null>(null);
+  const modeRef = useRef<VoiceMode>("off");
+  const rec = useRef<SpeechRec | null>(null);
+  const heard = useRef<string[]>([]); // hold mode: everything said while the button is down
+  const downAt = useRef(0);
+  const onCommandRef = useRef(onCommand);
+  useEffect(() => {
+    onCommandRef.current = onCommand;
+  });
+
+  const setBoth = (m: VoiceMode) => {
+    modeRef.current = m;
+    setMode(m);
+  };
+
+  // Close a listening session for good (no "send" on the way out)
+  const abort = useCallback(() => {
+    const r = rec.current;
+    rec.current = null;
+    if (!r) return;
+    r.onresult = r.onend = r.onerror = null;
+    try {
+      r.abort();
+    } catch {
+      // already closed
+    }
+  }, []);
+
+  const start = useCallback(() => {
+    abort(); // never two sessions at once
+    const SR = recognizer();
+    if (!SR) {
+      setError("Speech recognition isn't supported in this browser.");
+      setBoth("off");
+      return;
+    }
+    setError(null);
+    heard.current = [];
+    const r = new SR();
+    r.lang = "en-GB";
+    r.continuous = true; // keep going until we stop it
+    r.interimResults = false; // only finished sentences
+    r.onresult = (e) => {
+      for (let k = e.resultIndex; k < e.results.length; k++) {
+        if (!e.results[k].isFinal) continue;
+        const text = e.results[k][0].transcript.trim();
+        if (!text || isSpeaking()) continue; // ignore the app's own voice
+        if (modeRef.current === "continuous") onCommandRef.current(text);
+        else heard.current.push(text);
+      }
+    };
+    r.onerror = (e) => {
+      if (e.error === "no-speech" || e.error === "aborted") return; // normal: silence, or we stopped it
+      setError(MIC_ERRORS[e.error] ?? `Microphone error: ${e.error}`);
+      if (e.error in MIC_ERRORS) {
+        abort();
+        setBoth("off");
+      }
+    };
+    r.onend = () => {
+      if (rec.current !== r) return; // an old session
+      if (modeRef.current === "continuous") {
+        try {
+          r.start(); // browsers stop every so often: carry on listening
+        } catch {
+          setBoth("off");
+        }
+        return;
+      }
+      // hold mode: the button was released -> send what was said
+      rec.current = null;
+      const text = heard.current.join(" ").trim();
+      heard.current = [];
+      setBoth("off");
+      if (text) onCommandRef.current(text);
+    };
+    rec.current = r;
+    try {
+      r.start();
+    } catch {
+      setError("Couldn't start the microphone. Try again.");
+      rec.current = null;
+      setBoth("off");
+    }
+  }, [abort]);
+
+  /** Mic button pressed. */
+  const press = useCallback(() => {
+    if (modeRef.current === "continuous") {
+      downAt.current = -1; // a tap to switch it off (handled on release)
+      return;
+    }
+    downAt.current = Date.now();
+    setBoth("hold");
+    start();
+  }, [start]);
+
+  /** Mic button released. */
+  const release = useCallback(() => {
+    if (downAt.current === -1) {
+      abort(); // tapped while listening non-stop: stop
+      setBoth("off");
+      return;
+    }
+    if (modeRef.current !== "hold") return;
+    if (Date.now() - downAt.current < HOLD_MS) {
+      setBoth("continuous"); // a quick tap: keep listening until tapped again
+      return;
+    }
+    try {
+      rec.current?.stop(); // held: stop and send (in onend)
+    } catch {
+      setBoth("off");
+    }
+  }, [abort]);
+
+  useEffect(() => abort, [abort]); // stop listening when the page closes
+  return { mode, error, press, release, supported: !!recognizer() };
 }
