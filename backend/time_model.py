@@ -269,7 +269,27 @@ def best_departures(route_fn, profile="regular", now=None):
 
     slots[best_index]["best"] = True
 
+    for slot in slots:
+        slot["history_rain_prob"] = None
+    try:
+        try:
+            from . import db
+        except ImportError:
+            import db
+        history_cache ={}
+
+        for slot in slots:
+            local = datetime.fromisoformat(slot["depart_local"])
+            if local.month not in history_cache:
+                history_cache[local.month] = db.rain_chance_by_hour(local.month)
+
+            slot["history_rain_prob"] = history_cache[local.month].get(local.hour)
+            db.save_predictions(slots, route_id="default", profile=profile)
+    except Exception as e:
+        print("Database integration skipped:", e)
     return slots
+
+    
 
 SNAPSHOT = os.path.join(
     os.path.dirname(__file__),
