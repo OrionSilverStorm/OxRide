@@ -12,7 +12,7 @@ and that you talk to instead of tapping.
 [![Live app](https://img.shields.io/badge/live-oxfordride.vercel.app-A7C080?style=flat-square)](https://oxfordride.vercel.app)
 [![Demo video](https://img.shields.io/badge/demo-watch_the_video-E69875?style=flat-square)](https://drive.google.com/file/d/1Mv7RjkTfA6bIRbR0u-mDRknn6hZ7KVaR/view)
 [![OxHack 2026](https://img.shields.io/badge/OxHack-2026-7FBBB3?style=flat-square)](#team)
-[![Tests](https://github.com/OrionSilverStorm/OxRide/actions/workflows/tests.yml/badge.svg)](https://github.com/OrionSilverStorm/OxRide/actions/workflows/tests.yml)
+[![Tests](https://github.com/miksutko/OxRide/actions/workflows/tests.yml/badge.svg)](https://github.com/miksutko/OxRide/actions/workflows/tests.yml)
 
 <a href="https://drive.google.com/file/d/1Mv7RjkTfA6bIRbR0u-mDRknn6hZ7KVaR/view"><img src="docs/readme/demo.gif" alt="OxRide on a bike in Oxford: live tracking, live rerouting, voice search and spoken directions" width="560"></a>
 
@@ -296,7 +296,7 @@ Rain counts as likely from a 50% chance, and as gone below 20%, so the hint does
 You need Python 3.12 and Node 24 (the frontend unit tests run TypeScript directly). The Oxford map (`backend/oxford_graph.pkl`) is already in the repo.
 
 ```bash
-git clone https://github.com/OrionSilverStorm/OxRide.git
+git clone https://github.com/miksutko/OxRide.git
 cd OxRide
 
 # backend
