@@ -78,3 +78,15 @@ def test_wrong_gemini_model_lists_the_right_names(client, monkeypatch):
     assert body["ok"] is False
     assert body["models"] == ["gemini-x-flash"]  # only the one that really answered
     assert "models/flash" in body["message"]
+
+
+def test_gemini_speed_times_a_voice_command(client, monkeypatch):
+    import ai
+    def fake(audio, text, position, route, model=None, report=None):
+        report.update(model=model, thinking="short")
+        return {"action": "answer", "settings": {}, "reply": "ok"}
+    monkeypatch.setattr(ai, "interpret_voice", fake)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    body = client.post("/debug/gemini-speed?model=gemini-x-flash").json()
+    assert body["ok"] and body["model"] == "gemini-x-flash" and body["thinking"] == "short"
+    assert isinstance(body["seconds"], float)

@@ -124,15 +124,16 @@ def thinking_for(model: str):
 
 def interpret_voice(audio: bytes | None, text: str | None,
                     position: tuple[float, float] | None, route: dict | None,
-                    mime: str = "audio/webm") -> dict:
+                    mime: str = "audio/webm", model: str | None = None, report: dict | None = None) -> dict:
     """What the rider said -> {action, settings, reply} (Gemini).
 
     action is new_route | reroute | answer; reply is a sentence or two.
+    model overrides GEMINI_MODEL; report (if given) gets filled with how the call went.
     """
     from google import genai
     from google.genai import types
 
-    model = os.environ.get("GEMINI_MODEL")
+    model = model or os.environ.get("GEMINI_MODEL")
     if not model:
         raise RuntimeError("GEMINI_MODEL is not set (pick one with the Gemini test on /debug)")
     context = {"time_now": datetime.now(London).strftime("%A %Y-%m-%d %H:%M"),
@@ -152,9 +153,13 @@ def interpret_voice(audio: bytes | None, text: str | None,
                 system_instruction=SYSTEM, temperature=0.3, thinking_config=thinking,
                 response_mime_type="application/json", response_json_schema=SCHEMA))
 
+    report = report if report is not None else {}
+    report["model"] = model
     try:
         resp = ask(thinking_for(model))
-    except Exception:
+        report["thinking"] = "short" if thinking_for(model) is not None else "model default"
+    except Exception as e:
+        report["thinking"] = f"model default (short thinking rejected: {str(e)[:150]})"
         resp = ask(None)  # this model doesn't take that thinking setting: use its default
     result = json.loads(resp.text)
     if result.get("action") not in ("new_route", "reroute", "answer"):

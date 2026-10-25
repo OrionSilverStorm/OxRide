@@ -350,6 +350,22 @@ def working_gemini_models(client, limit=8):
     return working
 
 
+@router.post("/gemini-speed")
+def gemini_speed(model: str | None = None, text: str = "take me to the station") -> dict:
+    # Time one real voice command with a given model (admin: pick a fast GEMINI_MODEL).
+    import ai
+    if not os.environ.get("GEMINI_API_KEY"):
+        return {"ok": False, "message": "GEMINI_API_KEY is not set on this server."}
+    report = {}
+    t0 = time.perf_counter()
+    try:
+        result = ai.interpret_voice(None, text, (51.7534, -1.254), None, model=model, report=report)
+        ok, answer = True, result
+    except Exception as e:
+        ok, answer = False, f"{type(e).__name__}: {str(e)[:300]}"
+    return {"ok": ok, "seconds": round(time.perf_counter() - t0, 1), **report, "answer": answer}
+
+
 @router.get("/services")
 def services() -> dict:
     # Which settings the server can see. Only true/false: never the values.
