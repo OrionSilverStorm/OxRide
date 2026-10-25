@@ -56,6 +56,17 @@ class VoiceRequest(BaseModel):
 class SpeakRequest(BaseModel):
     text: str
 
+class NavStep(BaseModel):
+    instruction: str      # "Turn right onto Woodstock Rd"
+    distance_m: float     # Length of this step
+    lat: float            # Where the step starts
+    lon: float
+
+class NavigationData(BaseModel):
+    distance_m: float     # Total trip distance
+    duration_s: float     # Total trip time
+    steps: list[NavStep]
+
 
 def parse_depart_at(depart_at):
     # The request sends text (or nothing). get_context needs a real datetime.
@@ -98,6 +109,13 @@ async def route(req: RouteRequest) -> dict:
     except ValueError:
         raise HTTPException(status_code=404, detail="no route found")
 
+@app.post("/navigation")
+async def navigation(req: RouteRequest) -> NavigationData:
+    #DUMMY DATA ------ REPLACE PLEASE
+    return NavigationData(distance_m=650, duration_s=540, steps=[
+        NavStep(instruction="Head north on Woodstock Rd", distance_m=400, lat=req.start[0], lon=req.start[1]),
+        NavStep(instruction="Turn right onto Parks Rd", distance_m=250, lat=req.end[0], lon=req.end[1]),
+    ])
 
 @app.get("/best-departure")
 async def best_departure(start: str, end: str, profile: Profile = "regular") -> list:

@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   // service before Next sees it, so this rewrite is only used locally.
   async rewrites() {
     const backend = process.env.BACKEND_URL ?? "http://localhost:8000";
-    return [{ source: "/api/:path*", destination: `${backend}/:path*` }];
+    return [{ source: "/api/:path*", destination: `${backend}/:path*` }, { source: "/api/navigation", destination: "http://localhost:8000/navigation" }];
   },
   cacheComponents: true,
   partialPrefetching: true,

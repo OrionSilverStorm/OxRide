@@ -1,7 +1,7 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -13,7 +13,7 @@ import {
 } from "react-leaflet";
 
 import L from "leaflet";
-import { getRoute } from "@/lib/api";
+import { getRoute, getNavigation, type NavigationData } from "@/lib/api";
 
 //define ride types
 type Profile = "chill" | "regular" | "fast";
@@ -31,10 +31,23 @@ interface TargetPinProps {
   setTarget: (p: L.LatLng) => void; // Updates the parent's state
 }
 
-// Module level: one Photon result (coordinates are [lon, lat])
+// one Photon result (coordinates are [lon, lat]) for auto search fill
 interface Hit {
   geometry: { coordinates: [number, number] };
   properties: { osm_id: number; name?: string; street?: string };
+}
+
+//shape of the backend response [ADJUST FOR ACTUAL DATA]
+//nav instructions per turn
+interface Step {
+  instruction: string;
+  distance_m: number;
+}
+//basic trip info
+interface Trip {
+  route: [number, number][];
+  stats: { distance_m: number; duration_s: number };
+  steps: Step[];
 }
 
 const OXFORD_CENTER: [number, number] = [51.752, -1.2577];
@@ -97,6 +110,8 @@ export default function Map() {
   let [targetPos, setTargetPos] = useState<L.LatLng | null>(null); // Target position, null until the user clicks
   let [route, setRoute] = useState<[number, number][] | null>(null); // Route as [lat, lon] points, null until a ride is planned
   const [profile, setProfile] = useState<Profile>("regular"); //defaults to regular
+  //nav settings
+  const [nav, setNav] = useState<NavigationData | null>(null); // Non-null = navigation mode
   //////////////////////////////////////////////////////////////////////////
 
   // Moves the target and removes the stale route line
@@ -121,6 +136,14 @@ export default function Map() {
     }
     console.log(data); // { route, elevations_m, stats, steps }
     setRoute(data.route); // Draws the line below
+    //set nav bar data
+    setNav(
+      await getNavigation({
+        start: [userPos.lat, userPos.lng],
+        end: [targetPos.lat, targetPos.lng],
+        profile: p,
+      }),
+    );
   };
 
   ///******************************************************************************************** */
@@ -176,6 +199,39 @@ export default function Map() {
     setResults([]);
   };
 
+  //nav bar data
+  // Index of the step closest to the user (0 if no data or no GPS)
+  let i = 0; // Default: first step
+  if (nav && userPos) {
+    // Only search if we have navigation data AND the user's position
+    let best = Infinity; // Smallest distance found so far (starts huge so any real distance beats it)
+    nav.steps.forEach((s, k) => {
+      // Visit every step: s = the step, k = its index
+      const d = userPos.distanceTo([s.lat, s.lon]); // Straight-line metres from user to this step's start point
+      if (d < best) {
+        best = d;
+        i = k;
+      } // Closer than anything before: save the distance and this index
+    }); // End of loop: i now holds the closest step's index
+  } // End of the "have data and GPS" check
+  const step = nav?.steps[i]; // Current step object (undefined if nav is null); drives the top banner
+
+  // Distance left: this step plus all later ones
+  let left = 0; // Running total in metres
+  if (nav)
+    for (let k = i; k < nav.steps.length; k++) left += nav.steps[k].distance_m; // From the current step to the last, add each step's length
+
+  // Time left (assumes constant speed) and ETA clock time
+  const secs = nav ? nav.duration_s * (left / nav.distance_m) : 0; // Total time * share of distance remaining; 0 when not navigating
+  const eta = new Date(Date.now() + secs * 1000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  }); // Now + time left (ms), formatted like "01:40"
+
+  // "650 m" or "1.2 km"
+  const fmt = (m: number) =>
+    m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`; // 1000+ m: km with one decimal; otherwise whole metres
+
   return (
     <div className="h-full w-full">
       <MapContainer
@@ -206,79 +262,119 @@ export default function Map() {
       </MapContainer>
       {/* Search bar */}
       {/* Search bar: input + clear button + message, stacked */}
-      <div className="absolute left-1/2 top-4 z-[1000] w-64 -translate-x-1/2">
-        <div className="relative">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)} // Keep state in sync
-            onKeyDown={(e) => e.key === "Enter" && search()} // Search on Enter
-            placeholder="Search Oxford..."
-            className="w-full rounded bg-white py-2 pl-3 pr-8 shadow"
-          />
-          {query && (
+
+      {nav && (
+        <>
+          {/* Top: current direction */}
+          <div className="absolute inset-x-3 top-3 z-[1000] rounded-2xl bg-teal-800 p-4 text-white shadow">
+            <p className="text-lg font-semibold">{step?.instruction}</p>
+            <p className="text-sm opacity-80">
+              then {nav.steps[i + 1]?.instruction ?? "arrive"}
+            </p>
+          </div>
+
+          {/* Bottom: duration, distance left, ETA, exit */}
+          <div className="absolute inset-x-3 bottom-3 z-[1000] flex items-center justify-between rounded-2xl bg-neutral-900 p-4 text-white shadow">
+            <div>
+              <p className="text-2xl font-semibold">
+                {Math.max(1, Math.round(secs / 60))} min
+              </p>
+              <p className="text-sm opacity-70">
+                {fmt(left)} · {eta}
+              </p>
+            </div>
             <button
               onClick={() => {
-                setQuery("");
-              }} // Clear text and message
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"
+                setNav(null);
+                setRoute(null);
+              }}
+              className="rounded-full bg-red-600 px-5 py-2 font-semibold"
             >
-              ✕
+              Exit
             </button>
-          )}
-        </div>
-        {/* autocomplete searchbar */}
-        {results.length > 0 && (
-          <ul className="mt-1 rounded bg-white text-sm shadow">
-            {results.map((h) => (
-              <li
-                key={h.properties.osm_id}
-                onClick={() => pick(h)}
-                className="cursor-pointer px-3 py-2 hover:bg-gray-100"
-              >
-                {h.properties.name ?? h.properties.street}
-              </li>
-            ))}
-          </ul>
-        )}
-        {/* // Inside the search bar wrapper div, after the results list (so it sits
-        under the input) */}
-        <div className="mt-1 flex gap-1">
-          {/* Row of buttons: small top margin, small gap between them */}
-          {PROFILES.map(
-            (
-              p, // Loop over ["chill", "regular", "fast"], one button each
-            ) => (
+          </div>
+        </>
+      )}
+
+      {!nav && (
+        <div className="absolute left-1/2 top-4 z-[1000] w-64 -translate-x-1/2">
+          <div className="relative">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)} // Keep state in sync
+              onKeyDown={(e) => e.key === "Enter" && search()} // Search on Enter
+              placeholder="Search Oxford..."
+              className="w-full rounded bg-white py-2 pl-3 pr-8 shadow"
+            />
+            {query && (
               <button
-                key={p} // React needs a unique key per item in a list
                 onClick={() => {
-                  setProfile(p); // Highlight the selected ride type
-                  sendPositions(p); // Reroute now with the new type (returns early if a pin is missing)
-                }}
-                className={`flex-1 rounded px-2 py-1 text-sm capitalize shadow ${
-                  // flex-1: equal widths; capitalize: "chill" shows as "Chill"
-                  profile === p ? "bg-blue-600 text-white" : "bg-white" // Active one is blue, the rest are white
-                }`}
+                  setQuery("");
+                }} // Clear text and message
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"
               >
-                {p} {/* Button label: the ride type name */}
+                ✕
               </button>
-            ),
+            )}
+          </div>
+          {/* autocomplete searchbar */}
+          {results.length > 0 && (
+            <ul className="mt-1 rounded bg-white text-sm shadow">
+              {results.map((h) => (
+                <li
+                  key={h.properties.osm_id}
+                  onClick={() => pick(h)}
+                  className="cursor-pointer px-3 py-2 hover:bg-gray-100"
+                >
+                  {h.properties.name ?? h.properties.street}
+                </li>
+              ))}
+            </ul>
           )}
+          {/* // Inside the search bar wrapper div, after the results list (so it sits
+        under the input) */}
+          <div className="mt-1 flex gap-1">
+            {/* Row of buttons: small top margin, small gap between them */}
+            {PROFILES.map(
+              (
+                p, // Loop over ["chill", "regular", "fast"], one button each
+              ) => (
+                <button
+                  key={p} // React needs a unique key per item in a list
+                  onClick={() => {
+                    setProfile(p); // Highlight the selected ride type
+                    sendPositions(p); // Reroute now with the new type (returns early if a pin is missing)
+                  }}
+                  className={`flex-1 rounded px-2 py-1 text-sm capitalize shadow ${
+                    // flex-1: equal widths; capitalize: "chill" shows as "Chill"
+                    profile === p ? "bg-blue-600 text-white" : "bg-white" // Active one is blue, the rest are white
+                  }`}
+                >
+                  {p} {/* Button label: the ride type name */}
+                </button>
+              ),
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Button inside the wrapper div, outside <MapContainer> */}
       {/*z-[1000] sits above Leaflet's panes */}
-      <button
-        onClick={() => sendPositions()}
-        className="absolute bottom-4 left-1/2 z-[1000] -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
-        disabled={!userPos || !targetPos}
-      >
-        Ride
-      </button>
+      {!nav && (
+        <button
+          onClick={() => sendPositions()}
+          className="absolute bottom-4 left-1/2 z-[1000] -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
+          disabled={!userPos || !targetPos}
+        >
+          Ride
+        </button>
+      )}
       <button
         onClick={() => userPos && map?.flyTo(userPos, 16)} // Fly back to the blue dot
         disabled={!userPos}
-        className="absolute bottom-20 left-3 z-[1000] rounded bg-white px-3 py-2 shadow disabled:opacity-50"
+        className={`absolute left-3 z-[1000] rounded bg-white px-3 py-2 shadow disabled:opacity-50 ${
+          nav ? "bottom-28" : "bottom-20" // Higher when the navigation bar is showing
+        }`}
       >
         📍
       </button>

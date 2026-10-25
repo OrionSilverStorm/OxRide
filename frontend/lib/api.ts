@@ -5,6 +5,20 @@ export type LatLon = [number, number];
 export type Profile = "fast" | "regular" | "chill";
 export type Maneuver = "left" | "right" | "straight" | "arrive";
 
+export interface NavStep { instruction: string; distance_m: number; lat: number; lon: number }
+export interface NavigationData { distance_m: number; duration_s: number; steps: NavStep[] }
+
+// Same request body as /route
+export async function getNavigation(body: object): Promise<NavigationData> {
+  const res = await fetch("/api/navigation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export interface Step {
   text: string;
   distance_m: number;
