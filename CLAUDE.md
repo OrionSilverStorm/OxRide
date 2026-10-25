@@ -42,6 +42,7 @@ backend/
   ai.py            Gemini voice commands + ElevenLabs voice (+ Nominatim search)
   db.py            Tiger Data
   main.py          API endpoints
+  tests/           pytest suite: routing, time model, navigation, API (no network)
 frontend/
   app/page.tsx     planning screen: map + controls
   app/navigate/    navigation screen
@@ -298,3 +299,4 @@ Only edit your own files; ask the owner if you need a change in theirs.
 - API keys come from environment variables; never commit them. Keep `.env.example` current.
 - The frontend only talks to the backend through `frontend/lib/api.ts`; keep its types in sync with `main.py`.
 - Merge into `main` every couple of hours and keep `main` running: it is what gets deployed.
+- Run `npm test` (in `frontend/`) before pushing: backend tests plus the frontend type check. GitHub runs the same on every push (`.github/workflows/tests.yml`). A new feature gets a test in `backend/tests/`.

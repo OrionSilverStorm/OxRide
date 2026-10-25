@@ -9,6 +9,7 @@ import heapq
 import math
 import pickle
 
+import navigation
 import time_model
 
 GRAPH = None  # set once at startup with set_graph()
@@ -252,5 +253,5 @@ def find_route(start, end, profile_name, ctx):
         "route": route,
         "elevations_m": elevations,
         "stats": stats,
-        "steps": [],  # navigation.build_steps(GRAPH, path) once navigation.py is written
+        "steps": navigation.build_steps(GRAPH, path),
     }
