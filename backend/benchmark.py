@@ -121,19 +121,9 @@ def print_table(rows):
         print(f"| {label} | " + " | ".join(cells) + " |")
 
 
-def night_candidates(profile, unlit_penalty, top):
-    # Pretend time_penalty already charges more for unlit roads in the dark,
-    # then find trips where the night route moves the most.
-    real = time_model.time_penalty
-
-    def with_night_rule(edge, ctx):
-        p = real(edge, ctx)
-        if ctx.get("dark") and not edge.get("lit"):
-            p *= unlit_penalty
-        return p
-
-    time_model.time_penalty = with_night_rule
-    try:
+def night_candidates(profile, top):
+    # Find trips where the night route (time_model's darkness penalty) moves the most.
+    if True:
         found = []
         for a, b in itertools.permutations(PLACES, 2):
             day, _, _ = route(PLACES[a], PLACES[b], profile, DAY)
@@ -150,27 +140,25 @@ def night_candidates(profile, unlit_penalty, top):
             if detour < 1.35:
                 found.append((share_moved * (n["lit_share"] - d["lit_share"]), a, b, share_moved, detour, d, n))
         found.sort(reverse=True)
-        print(f"Trips where the night route changes most ({profile}, unlit roads x{unlit_penalty} in the dark)\n")
+        print(f"Trips where the night route changes most ({profile})\n")
         print("| trip | route moved | extra distance | lit by day → night |")
         print("|---|---|---|---|")
         for _, a, b, moved, detour, d, n in found[:top]:
             print(f"| {a} → {b} | {moved:.0%} | {detour - 1:+.0%} | {d['lit_share']:.0%} → {n['lit_share']:.0%} |")
-    finally:
-        time_model.time_penalty = real
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--night", action="store_true", help="find demo trips for the day/night switch")
-    ap.add_argument("--penalty", type=float, default=2.0, help="unlit cost multiplier for --night")
     ap.add_argument("--profile", default="regular")
     ap.add_argument("--no-google", action="store_true")
     ap.add_argument("--top", type=int, default=8)
     args = ap.parse_args()
 
-    routing.load_graph("oxford_graph.pkl")
+    import os
+    routing.load_graph(os.path.join(os.path.dirname(os.path.abspath(__file__)), "oxford_graph.pkl"))
     if args.night:
-        night_candidates(args.profile, args.penalty, args.top)
+        night_candidates(args.profile, args.top)
     else:
         import os
         use_google = bool(os.environ.get("GOOGLE_MAPS_API_KEY")) and not args.no_google

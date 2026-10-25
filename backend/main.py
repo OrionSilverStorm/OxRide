@@ -1,5 +1,6 @@
-"""API endpoints. /route is real; the others return fake JSON until their functions are ready."""
+"""API endpoints. Parses the request, calls one or two functions, returns JSON."""
 
+import base64
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import ai
 import debug
 import routing
 import time_model
@@ -22,8 +24,10 @@ Profile = Literal["fast", "regular", "chill"]
 
 @asynccontextmanager
 async def lifespan(app):
-    # Load the graph once, when the server starts.
-    if os.path.exists(GRAPH_PATH):
+    # Load the graph once, when the server starts (skipped if it's already loaded).
+    if routing.GRAPH is not None:
+        pass
+    elif os.path.exists(GRAPH_PATH):
         routing.load_graph(GRAPH_PATH)
     else:
         print(f"WARNING: {GRAPH_PATH} not found. Run `python build_graph.py` first.")
@@ -48,6 +52,7 @@ class RouteRequest(BaseModel):
 
 class VoiceRequest(BaseModel):
     audio_b64: str | None = None
+    mime: str = "audio/webm"  # what the browser recorded (iPhones: audio/mp4)
     text: str | None = None
     position: LatLon | None = None
     route: dict | None = None
@@ -99,7 +104,7 @@ async def health() -> dict:
 
 
 @app.post("/route")
-async def route(req: RouteRequest) -> dict:
+def route(req: RouteRequest) -> dict:
     if routing.GRAPH is None:
         raise HTTPException(status_code=503, detail="graph not loaded: run python build_graph.py")
 
@@ -117,21 +122,80 @@ async def navigation(req: RouteRequest) -> NavigationData:
         NavStep(instruction="Turn right onto Parks Rd", distance_m=250, lat=req.end[0], lon=req.end[1]),
     ])
 
+def parse_point(text):
+    # "51.75,-1.25" -> (51.75, -1.25)
+    try:
+        lat, lon = (float(x) for x in text.split(","))
+        return lat, lon
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"expected 'lat,lon', got {text!r}")
+
+
 @app.get("/best-departure")
-async def best_departure(start: str, end: str, profile: Profile = "regular") -> list:
-    return []
+def best_departure(start: str, end: str, profile: Profile = "regular") -> list:
+    # One A* run for leaving now, then the same route's ETA for every 15-minute slot.
+    if routing.GRAPH is None:
+        raise HTTPException(status_code=503, detail="graph not loaded")
+    s, e = parse_point(start), parse_point(end)
+    ctx = get_ctx(None)
+    path = routing.find_path(s, e, profile, ctx)
+    if path is None:
+        raise HTTPException(status_code=404, detail="no route found")
+    edges = routing.route_edges(path, routing.PROFILES[profile], ctx)
+    return time_model.best_departures(lambda _ctx: edges, profile=profile, route_id=f"{start}->{end}")
 
 
 @app.get("/search")
-async def search(q: str) -> list:
-    return []
+def search(q: str) -> list:
+    try:
+        return ai.search_place(q)
+    except Exception as e:
+        print(f"WARNING: place search failed ({e!r})")
+        raise HTTPException(status_code=502, detail="place search is unavailable")
 
 
 @app.post("/voice")
-async def voice(req: VoiceRequest) -> dict:
-    return {"action": "answer", "settings": {}, "reply": "Okay."}
+def voice(req: VoiceRequest) -> dict:
+    # Gemini works out what the rider wants; a named place is turned into coordinates.
+    if not req.audio_b64 and not (req.text or "").strip():
+        raise HTTPException(status_code=422, detail="send audio_b64 or text")
+    try:
+        audio = base64.b64decode(req.audio_b64) if req.audio_b64 else None
+    except ValueError:
+        raise HTTPException(status_code=422, detail="audio_b64 is not base64")
+    try:
+        result = ai.interpret_voice(audio, req.text, req.position, req.route, req.mime)
+    except Exception as e:
+        print(f"WARNING: Gemini failed ({e!r})")
+        return {"action": "answer", "settings": {}, "reply": "Sorry, I couldn't understand that. Try again?"}
+
+    settings = dict(result.get("settings") or {})
+    place = settings.pop("destination", None)
+    if result["action"] == "new_route":
+        hits = []
+        if place:
+            try:
+                hits = ai.search_place(place)
+            except Exception as e:
+                print(f"WARNING: place search failed ({e!r})")
+        if not hits:
+            return {"action": "answer", "settings": {},
+                    "reply": f"Sorry, I couldn't find {place or 'that place'} in Oxford."}
+        settings["end"] = [hits[0]["lat"], hits[0]["lon"]]
+        settings["end_name"] = hits[0]["name"]
+    if req.position and result["action"] in ("new_route", "reroute"):
+        settings["start"] = list(req.position)
+    return {"action": result["action"], "settings": settings, "reply": result["reply"]}
 
 
 @app.post("/speak")
-async def speak(req: SpeakRequest) -> dict:
-    return {"audio": None}
+def speak(req: SpeakRequest) -> dict:
+    # ElevenLabs audio as base64 mp3; None tells the browser to use its own voice.
+    text = req.text.strip()
+    if not text:
+        return {"audio": None}
+    try:
+        return {"audio": base64.b64encode(ai.speak(text[:500])).decode()}
+    except Exception as e:
+        print(f"WARNING: ElevenLabs failed ({e!r})")
+        return {"audio": None}

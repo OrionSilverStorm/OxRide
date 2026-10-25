@@ -9,6 +9,7 @@ import heapq
 import math
 import pickle
 
+import navigation
 import time_model
 
 GRAPH = None  # set once at startup with set_graph()
@@ -43,7 +44,8 @@ def _with_links(factors):
 
 
 # footway: UK cyclists generally can't ride on pavements, so only use them to connect.
-# pedestrian: covers Cornmarket/Queen Street until the restricted-hours rule exists.
+# pedestrian: pedestrianised streets. (Cornmarket and Queen Street are no-cycling in OSM,
+#   so they are not in the bike graph at all.)
 # trunk: the A40/A34 ring road; fast riders tolerate it, chill riders really don't.
 PROFILES = {
     "fast": {
@@ -207,6 +209,11 @@ def find_path(start, end, profile_name, ctx):
     return astar(GRAPH, start_node, end_node, profile, ctx)
 
 
+def route_edges(path, profile, ctx):
+    # The road data for each step of a path (the cheapest road between each pair of nodes).
+    return [cheapest_edge(GRAPH, a, b, profile, ctx)[0] for a, b in zip(path, path[1:])]
+
+
 def find_route(start, end, profile_name, ctx):
     # Same fields as the /route output:
     #   route         list of [lat, lon] (drawn on the map)
@@ -252,5 +259,5 @@ def find_route(start, end, profile_name, ctx):
         "route": route,
         "elevations_m": elevations,
         "stats": stats,
-        "steps": [],  # navigation.build_steps(GRAPH, path) once navigation.py is written
+        "steps": navigation.build_steps(GRAPH, path),
     }

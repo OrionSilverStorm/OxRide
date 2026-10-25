@@ -8,6 +8,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   debugRoute,
   getDebugProfiles,
+  getServices,
+  testService,
+  type ServiceName,
+  type ServiceTest,
   type DebugCtx,
   type DebugProfiles,
   type DebugRoute,
@@ -156,6 +160,82 @@ function Seg<T extends string>({ value, options, onChange }: { value: T; options
   );
 }
 
+// --- Services: are the API keys set up on this server? ------------------------------
+
+const SERVICE_LABELS: Record<ServiceName, string> = {
+  gemini: "Gemini",
+  elevenlabs: "ElevenLabs",
+  database: "Tiger Data",
+  google_maps: "Google Maps (optional)",
+};
+
+function ServicesBox() {
+  const [vars, setVars] = useState<Record<ServiceName, Record<string, boolean>> | null>(null);
+  const [results, setResults] = useState<Partial<Record<ServiceName, ServiceTest | "running">>>({});
+
+  useEffect(() => {
+    getServices().then(setVars).catch(() => setVars(null));
+  }, []);
+
+  const run = async (name: ServiceName) => {
+    setResults((r) => ({ ...r, [name]: "running" }));
+    try {
+      const res = await testService(name);
+      setResults((r) => ({ ...r, [name]: res }));
+      if (res.audio) new Audio(`data:audio/mpeg;base64,${res.audio}`).play().catch(() => {});
+    } catch (e) {
+      setResults((r) => ({ ...r, [name]: { ok: false, message: (e as Error).message } }));
+    }
+  };
+
+  if (!vars) return <p className="text-xs text-neutral-500">Can&apos;t read the server&apos;s settings.</p>;
+
+  return (
+    <div className="space-y-2 text-xs">
+      {(Object.keys(vars) as ServiceName[]).map((name) => {
+        const res = results[name];
+        return (
+          <div key={name} className="rounded border border-neutral-200 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium">{SERVICE_LABELS[name]}</span>
+              <button
+                onClick={() => run(name)}
+                disabled={res === "running"}
+                className="rounded border border-neutral-300 px-2 py-0.5 hover:bg-neutral-100 disabled:opacity-50"
+              >
+                {res === "running" ? "testing…" : "Test"}
+              </button>
+            </div>
+            <div className="mt-1 flex flex-wrap gap-x-3 text-neutral-600">
+              {Object.entries(vars[name]).map(([v, set]) => (
+                <span key={v} className={set ? "text-green-700" : "text-neutral-400"}>
+                  {set ? "✓" : "✗"} {v}
+                </span>
+              ))}
+            </div>
+            {res && res !== "running" && (
+              <div className={`mt-1 ${res.ok ? "text-green-700" : "text-red-700"}`}>
+                {res.ok ? "Works: " : "Problem: "}
+                {res.message}
+                {res.ms != null && <span className="text-neutral-400"> ({res.ms} ms)</span>}
+                {res.models && (
+                  <ul className="mt-1 list-disc pl-4 text-neutral-700">
+                    {res.models.map((m) => <li key={m} className="font-mono">{m}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <p className="text-neutral-500">
+        Keys are set in Vercel (Settings → Environment Variables) or backend/.env locally. Values are never shown.
+        After changing them on Vercel, redeploy.
+      </p>
+    </div>
+  );
+}
+
 const num = "w-16 rounded border border-neutral-300 px-1 py-0.5 text-right text-xs tabular-nums";
 
 // --- The panel -------------------------------------------------------------------
@@ -264,6 +344,10 @@ export default function DebugPanel() {
         {result?.warnings.map((w, i) => (
           <div key={i} className="mx-3 mt-2 rounded bg-amber-50 p-2 text-xs text-amber-800">⚠ {w}</div>
         ))}
+
+        <Section title="Services (API keys)">
+          <ServicesBox />
+        </Section>
 
         <Section title="Trip">
           <div className="mb-2 flex flex-wrap items-center gap-2">

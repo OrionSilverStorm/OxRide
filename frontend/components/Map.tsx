@@ -1,7 +1,12 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
+<<<<<<< HEAD
 import { useState, useEffect, useMemo } from "react";
+=======
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+>>>>>>> bde95d421e2709fbbee14d7c5d4e3ddfbbf96fa3
 import {
   MapContainer,
   TileLayer,
@@ -13,7 +18,24 @@ import {
 } from "react-leaflet";
 
 import L from "leaflet";
+<<<<<<< HEAD
 import { getRoute, getNavigation, type NavigationData } from "@/lib/api";
+=======
+import {
+  getBestDeparture,
+  getRoute,
+  searchPlace,
+  type LatLon,
+  type RouteResult,
+  type VoiceResult,
+} from "@/lib/api";
+import { DEMO_TRIPS, departureHint, nextAt } from "@/lib/nav";
+import { saveTrip } from "@/lib/trip";
+import { unlockAudio } from "@/lib/speech";
+import { useVoice } from "@/hooks/useVoice";
+import RoutePanel from "./RoutePanel";
+import VoiceButton from "./VoiceButton";
+>>>>>>> bde95d421e2709fbbee14d7c5d4e3ddfbbf96fa3
 
 //define ride types
 type Profile = "chill" | "regular" | "fast";
@@ -68,6 +90,20 @@ const targetIcon = L.divIcon({
   iconAnchor: [8, 8], // Centre of the dot sits exactly on the clicked point
 });
 
+// Green dot for a start point picked on the map (or a demo trip) instead of GPS
+const startIcon = L.divIcon({
+  className: "",
+  html: '<div style="width:16px;height:16px;background:#16a34a;border:3px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,.4)"></div>',
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+});
+
+// When to leave: the route changes with the time (dark streets at night)
+type When = "now" | "noon" | "night";
+const WHEN_LABEL: Record<When, string> = { now: "Now", noon: "Noon", night: "Night" };
+const departAtFor = (w: When): string | null =>
+  w === "now" ? null : nextAt(w === "noon" ? 12 : 22, new Date());
+
 function TargetPin({ target, setTarget }: TargetPinProps) {
   // Attach map event handlers (react-leaflet removes them automatically on unmount)
   useMapEvents({
@@ -106,34 +142,132 @@ function UserMarker({ pos, setPos }: UserMarkerProps) {
 
 export default function Map() {
   //start and end location
-  let [userPos, setUserPos] = useState<L.LatLng | null>(null); // User's position, null until found
-  let [targetPos, setTargetPos] = useState<L.LatLng | null>(null); // Target position, null until the user clicks
-  let [route, setRoute] = useState<[number, number][] | null>(null); // Route as [lat, lon] points, null until a ride is planned
+  const [userPos, setUserPos] = useState<L.LatLng | null>(null); // User's position, null until found
+  const [targetPos, setTargetPos] = useState<L.LatLng | null>(null); // Target position, null until the user clicks
+  const [result, setResult] = useState<RouteResult | null>(null); // The planned ride (line, stats, steps), null until planned
+  const route = result?.route ?? null; // Route as [lat, lon] points
   const [profile, setProfile] = useState<Profile>("regular"); //defaults to regular
+<<<<<<< HEAD
   //nav settings
   const [nav, setNav] = useState<NavigationData | null>(null); // Non-null = navigation mode
+=======
+  const [when, setWhen] = useState<When>("now"); // Departure: now, noon or night
+  const [startPick, setStartPick] = useState<L.LatLng | null>(null); // Start picked on the map/demo (overrides GPS)
+  const [tapSetsStart, setTapSetsStart] = useState(false); // Next map tap moves the start instead of the destination
+  const [hintFor, setHintFor] = useState<{ result: RouteResult; text: string | null } | null>(null); // "Leave in 20 min: ..." for one route
+  const [busy, setBusy] = useState(false); // Waiting for /route
+  const [error, setError] = useState<string | null>(null); // Shown above the bottom panel
+  const [endName, setEndName] = useState<string | undefined>(undefined); // Destination name from search/voice
+  const router = useRouter();
+  const voice = useVoice();
+  const start = startPick ?? userPos; // Where the ride starts
+>>>>>>> bde95d421e2709fbbee14d7c5d4e3ddfbbf96fa3
   //////////////////////////////////////////////////////////////////////////
 
   // Moves the target and removes the stale route line
   const placeTarget = (p: L.LatLng) => {
     setTargetPos(p);
-    setRoute(null);
+    setResult(null);
+    setEndName(undefined);
+  };
+
+  // A map tap sets the destination, or the start when "Start: tap map" is on
+  const onMapTap = (p: L.LatLng) => {
+    if (tapSetsStart) {
+      setStartPick(p);
+      setTapSetsStart(false);
+      setResult(null);
+    } else {
+      placeTarget(p);
+    }
   };
 
   // Routing
-  const sendPositions = async (p: Profile = profile) => {
-    if (!userPos || !targetPos) return; // Need both points
+  const lastRequest = useRef(0); // Ignore answers to older requests
+  const sendPositions = async (
+    p: Profile = profile,
+    w: When = when,
+    from: L.LatLng | null = start,
+    to: L.LatLng | null = targetPos,
+  ) => {
+    if (!from || !to) return; // Need both points
+    const id = ++lastRequest.current;
+    setBusy(true);
+    setError(null);
     let data;
     try {
       data = await getRoute({
-        start: [userPos.lat, userPos.lng], // [lat, lon], latitude first
-        end: [targetPos.lat, targetPos.lng], // [lat, lon], latitude first
+        start: [from.lat, from.lng], // [lat, lon], latitude first
+        end: [to.lat, to.lng], // [lat, lon], latitude first
         profile: p, // "fast" | "regular" | "chill"
-        // depart_at left out = leaving now
+        depart_at: departAtFor(w) ?? undefined, // left out = leaving now
       });
     } catch (e) {
-      return console.warn(e); // 404 no route, 503 graph not loaded, or backend down
+      console.warn(e); // 404 no route, 503 graph not loaded, or backend down
+      if (id === lastRequest.current) setError("Couldn't find a route. Try other points.");
+      return;
+    } finally {
+      if (id === lastRequest.current) setBusy(false);
     }
+    if (id !== lastRequest.current) return;
+    setResult(data); // Draws the line below and fills the panel
+  };
+
+  // "Best time to leave" hint, only when leaving now (TIME theme)
+  const hint = hintFor?.result === result && when === "now" ? hintFor.text : null;
+  useEffect(() => {
+    if (!result || when !== "now" || !start || !targetPos) return;
+    let cancelled = false;
+    getBestDeparture([start.lat, start.lng], [targetPos.lat, targetPos.lng], profile)
+      .then((slots) => !cancelled && setHintFor({ result, text: departureHint(slots, Date.now()) }))
+      .catch(() => {}); // no hint is fine
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
+
+  // Demo trips: set both ends and plan straight away
+  const runDemo = (trip: (typeof DEMO_TRIPS)[number]) => {
+    const from = L.latLng(trip.start[0], trip.start[1]);
+    const to = L.latLng(trip.end[0], trip.end[1]);
+    setStartPick(from);
+    setTargetPos(to);
+    setEndName(trip.name.split(" → ")[1]);
+    map?.fitBounds(L.latLngBounds([from, to]), { padding: [80, 80] });
+    sendPositions(profile, when, from, to);
+  };
+
+  // Start navigating: hand the trip to /navigate
+  const startRide = () => {
+    if (!result || !start || !targetPos) return;
+    unlockAudio(); // a tap: lets the phone play spoken directions later
+    saveTrip({
+      start: [start.lat, start.lng],
+      end: [targetPos.lat, targetPos.lng],
+      endName,
+      profile,
+      departAt: departAtFor(when),
+      result,
+    });
+    router.push("/navigate");
+  };
+
+  // What the rider said (Gemini): a new place, a different way, or just an answer
+  const onVoice = (r: VoiceResult) => {
+    const s = r.settings;
+    const p = (s.profile as Profile | undefined) ?? profile;
+    if (s.profile) setProfile(p);
+    if (r.action === "new_route" && s.end) {
+      const to = L.latLng(s.end[0], s.end[1]);
+      setTargetPos(to);
+      setEndName(s.end_name);
+      map?.flyTo(to, 15);
+      sendPositions(p, when, start, to);
+    } else if (r.action === "reroute") {
+      sendPositions(p);
+    }
+<<<<<<< HEAD
     console.log(data); // { route, elevations_m, stats, steps }
     setRoute(data.route); // Draws the line below
     //set nav bar data
@@ -144,6 +278,8 @@ export default function Map() {
         profile: p,
       }),
     );
+=======
+>>>>>>> bde95d421e2709fbbee14d7c5d4e3ddfbbf96fa3
   };
 
   ///******************************************************************************************** */
@@ -154,15 +290,14 @@ export default function Map() {
   const search = async () => {
     if (!query.trim()) return; // Ignore empty input
     try {
-      const url =
-        `https://nominatim.openstreetmap.org/search?format=json&limit=1&bounded=1` + // bounded=1: only results inside the viewbox
-        `&viewbox=-1.37,51.82,-1.14,51.69` + // Oxford bounds: left,top,right,bottom (lng,lat)
-        `&q=${encodeURIComponent(query)}`; // Escape the text
-      const [hit] = await (await fetch(url)).json(); // First result, or undefined
-      if (!hit) return console.warn("No results"); // Nothing found
-      const p = L.latLng(+hit.lat, +hit.lon); // Nominatim returns strings, so convert
+      // Our backend asks Nominatim (Oxford only, rate-limited, cached)
+      const [hit] = await searchPlace(query); // First result, or undefined
+      if (!hit) return setError(`Nothing called "${query}" in Oxford`); // Nothing found
+      const p = L.latLng(hit.lat, hit.lon);
       if (!OXFORD_BOUNDS.contains(p)) return; // Safety check
       placeTarget(p); // Drop the red pin
+      setEndName(hit.name);
+      setResults([]);
       map?.flyTo(p, 16); // Move the map there
     } catch (err) {
       console.warn("Search failed:", err); // Network or parse error
@@ -194,7 +329,8 @@ export default function Map() {
   // Click a suggestion: drop the pin, fly there, close the list
   const pick = (h: Hit) => {
     const [lon, lat] = h.geometry.coordinates;
-    setTargetPos(L.latLng(lat, lon));
+    placeTarget(L.latLng(lat, lon));
+    setEndName(h.properties.name ?? h.properties.street);
     map?.flyTo([lat, lon], 16);
     setResults([]);
   };
@@ -251,7 +387,8 @@ export default function Map() {
           attribution="&copy; OpenStreetMap contributors"
         />
         <UserMarker pos={userPos} setPos={setUserPos} />
-        <TargetPin target={targetPos} setTarget={placeTarget} />
+        <TargetPin target={targetPos} setTarget={onMapTap} />
+        {startPick && <Marker position={startPick} icon={startIcon} />}
         {route && (
           <Polyline
             positions={route}
@@ -356,6 +493,7 @@ export default function Map() {
             )}
           </div>
         </div>
+<<<<<<< HEAD
       )}
 
       {/* Button inside the wrapper div, outside <MapContainer> */}
@@ -375,6 +513,76 @@ export default function Map() {
         className={`absolute left-3 z-[1000] rounded bg-white px-3 py-2 shadow disabled:opacity-50 ${
           nav ? "bottom-28" : "bottom-20" // Higher when the navigation bar is showing
         }`}
+=======
+        {/* When to leave: the night route prefers lit streets */}
+        <div className="mt-1 flex gap-1">
+          {(Object.keys(WHEN_LABEL) as When[]).map((w) => (
+            <button
+              key={w}
+              onClick={() => {
+                setWhen(w);
+                sendPositions(profile, w);
+              }}
+              className={`flex-1 rounded px-2 py-1 text-sm shadow ${when === w ? "bg-neutral-900 text-white" : "bg-white"}`}
+            >
+              {WHEN_LABEL[w]}
+            </button>
+          ))}
+        </div>
+        {/* Start point: GPS, or tap the map (handy indoors / outside Oxford) */}
+        <div className="mt-1 flex gap-1 text-xs">
+          <button
+            onClick={() => setTapSetsStart((v) => !v)}
+            className={`flex-1 rounded px-2 py-1 shadow ${tapSetsStart ? "bg-green-600 text-white" : "bg-white"}`}
+          >
+            {tapSetsStart ? "Tap the map for the start" : start ? "Move start" : "Set start on map"}
+          </button>
+          {DEMO_TRIPS.map((t) => (
+            <button key={t.name} onClick={() => runDemo(t)} className="flex-1 rounded bg-white px-1 py-1 shadow">
+              {t.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Bottom: the planned ride, or the Ride button. z-[1000] sits above Leaflet's panes */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1000] flex flex-col items-center gap-2 p-3">
+        {error && (
+          <div className="pointer-events-auto rounded bg-red-50 px-3 py-1 text-sm text-red-700 shadow">{error}</div>
+        )}
+        <VoiceButton
+          voice={voice}
+          context={() => ({ position: start ? ([start.lat, start.lng] as LatLon) : null, route: result })}
+          onResult={onVoice}
+          className="pointer-events-auto"
+        />
+        <div className="pointer-events-auto flex w-full max-w-md items-end justify-center gap-3">
+          {result ? (
+            <RoutePanel
+              result={result}
+              whenLabel={when === "now" ? "Leaving now" : `${WHEN_LABEL[when]} (${departAtFor(when)?.slice(11)})`}
+              dark={when === "night"}
+              hint={hint}
+              onStart={startRide}
+              busy={busy}
+            />
+          ) : (
+            <button
+              onClick={() => sendPositions()}
+              className="h-12 rounded-xl bg-blue-600 px-6 text-white shadow disabled:opacity-50"
+              disabled={!start || !targetPos || busy}
+            >
+              {busy ? "Finding route…" : !start ? "Set a start" : !targetPos ? "Tap a destination" : "Ride"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <button
+        onClick={() => userPos && map?.flyTo(userPos, 16)} // Fly back to the blue dot
+        disabled={!userPos}
+        className="absolute left-3 top-4 z-[1000] rounded bg-white px-3 py-2 shadow disabled:opacity-50"
+>>>>>>> bde95d421e2709fbbee14d7c5d4e3ddfbbf96fa3
       >
         📍
       </button>

@@ -51,6 +51,7 @@ export type VoiceAction = "new_route" | "reroute" | "answer";
 
 export interface VoiceRequest {
   audio_b64?: string;
+  mime?: string; // what the browser recorded, e.g. "audio/webm" or "audio/mp4"
   text?: string;
   position?: LatLon;
   route?: RouteResult;
@@ -58,8 +59,28 @@ export interface VoiceRequest {
 
 export interface VoiceResult {
   action: VoiceAction;
-  settings: Partial<RouteRequest>;
+  // new_route: end (+ end_name) found from the place the rider named; start = their position
+  settings: Partial<RouteRequest> & { end_name?: string };
   reply: string;
+}
+
+/** One 15-minute departure option from /best-departure. */
+export interface Slot {
+  depart_local: string;
+  depart_utc: string;
+  eta_min: number;
+  rain_prob: number;
+  rain_mm?: number;
+  wind_ms: number;
+  dark: boolean;
+  score?: number;
+  best: boolean;
+}
+
+export interface Place {
+  name: string;
+  lat: number;
+  lon: number;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -90,6 +111,13 @@ export const speak = (text: string) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
   });
+
+export const getBestDeparture = (start: LatLon, end: LatLon, profile: Profile) =>
+  request<Slot[]>(
+    `/best-departure?start=${start.join(",")}&end=${end.join(",")}&profile=${profile}`,
+  );
+
+export const searchPlace = (q: string) => request<Place[]>(`/search?q=${encodeURIComponent(q)}`);
 
 // --- Debug panel (/debug). Mirrors backend/debug.py. ---
 
@@ -184,3 +212,21 @@ export const debugRoute = (body: DebugRouteRequest) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
+// --- Services box on /debug: are the API keys set up? Mirrors debug.py. ---
+
+export type ServiceName = "gemini" | "elevenlabs" | "database" | "google_maps";
+
+export const getServices = () =>
+  request<Record<ServiceName, Record<string, boolean>>>("/debug/services");
+
+export interface ServiceTest {
+  ok: boolean;
+  message: string;
+  ms?: number;
+  models?: string[]; // Gemini: model names to pick from when GEMINI_MODEL isn't set
+  audio?: string; // ElevenLabs: base64 mp3
+}
+
+export const testService = (name: ServiceName) =>
+  request<ServiceTest>(`/debug/services/${name}/test`, { method: "POST" });
