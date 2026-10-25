@@ -16,6 +16,7 @@ and that you talk to instead of tapping.
 
 <a href="https://drive.google.com/file/d/1Mv7RjkTfA6bIRbR0u-mDRknn6hZ7KVaR/view"><img src="docs/readme/demo.gif" alt="OxRide on a bike in Oxford: live tracking, live rerouting, voice search and spoken directions" width="560"></a>
 
+<!-- Diagrams: sources in docs/readme/diagrams/*.mmd, rendered with mermaid-cli (mmdc -c light.json / dark.json -s 2). -->
 <sub>The demo at double speed. <a href="https://drive.google.com/file/d/1Mv7RjkTfA6bIRbR0u-mDRknn6hZ7KVaR/view">Watch the full 55-second video with sound</a>, or <a href="https://drive.google.com/file/d/1Kg7IuTk3nGNrHDpfCL37EvraNJMN10Jf/view">the raw handlebar footage</a>.</sub>
 
 </div>
@@ -127,31 +128,10 @@ Where Tiger Data has 6 or more real GPS points on a street around that hour of t
 
 ## How it works
 
-```mermaid
-flowchart TB
-    subgraph phone["Phone browser · Next.js"]
-        ui["Map.tsx<br/>map, GPS, directions"]
-        mic["useVoice<br/>records 16 kHz WAV"]
-        spk["speak.ts<br/>plays the reply"]
-        lg["useRideLog<br/>GPS every 15 s"]
-    end
-    subgraph api["FastAPI on Vercel · /api"]
-        r["/route<br/>A* + time model"]
-        v["/voice"]
-        s["/speak"]
-        rl["/rides"]
-    end
-    ui --> r
-    mic --> v
-    spk --> s
-    lg --> rl
-    r --> meteo[("Open-Meteo<br/>hourly forecast")]
-    r --> tiger[("Tiger Data<br/>ride log")]
-    rl --> tiger
-    v --> gem["Gemini"]
-    v --> nom["Nominatim"]
-    s --> el["ElevenLabs"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/diagram-architecture-dark.png">
+  <img src="docs/readme/diagram-architecture-light.png" alt="How OxRide fits together: four phone features, each calling one API endpoint, which calls Open-Meteo, Tiger Data, Gemini, Nominatim or ElevenLabs" width="820">
+</picture>
 
 One Vercel project runs both halves: `/api/*` goes to the Python backend, everything else to the Next.js app. API keys live only on the backend.
 
@@ -188,27 +168,10 @@ In the app, `lib/nav.ts` snaps your GPS position onto the route to find the curr
 
 <br>
 
-```mermaid
-sequenceDiagram
-    actor You
-    participant App as Phone app
-    participant API as OxRide API
-    participant G as Gemini
-    participant N as Nominatim
-    participant E as ElevenLabs
-    You->>App: Hold the mic, "chill ride to the Rad Cam"
-    App->>API: POST /voice (WAV + position + current route)
-    API->>G: audio, time, position, route summary
-    G-->>API: new_route, profile chill, destination Radcliffe Camera
-    API->>N: Radcliffe Camera, Oxford only
-    N-->>API: 51.7534, -1.2540
-    API-->>App: action, destination, spoken reply
-    App->>API: POST /route (Chill, leaving now)
-    App->>API: POST /speak (the reply)
-    API->>E: text
-    E-->>API: mp3
-    API-->>App: mp3, played on the phone
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/diagram-voice-dark.png">
+  <img src="docs/readme/diagram-voice-light.png" alt="What happens when you say chill ride to the Rad Cam: the app sends the recording to the API, Gemini picks the action, Nominatim finds the place, the route is planned and ElevenLabs speaks the reply" width="820">
+</picture>
 
 **Gemini.** The phone records the mic (mp4 on iPhones, webm elsewhere), converts it to 16 kHz mono WAV in the browser and sends it to `/voice`. Gemini hears the audio itself, together with the time, your position and a summary of the current route. It answers in structured JSON with one of three actions: a new route, a different way to the same place, or a spoken answer. The prompt carries 72 spoken names for 48 Oxford places, so "Univ", "Maudlin", "the House", "the Bod", "the JR", "Teddy Hall" and "Catz" all land in the right place, and Gemini also returns what it heard so a mishearing shows on screen. The named place is then found with Nominatim inside the Oxford box. If the main model is slow or out of quota, two backup models get 10 s each.
 
@@ -221,15 +184,10 @@ sequenceDiagram
 
 <br>
 
-```mermaid
-flowchart LR
-    a["GPS points<br/>every 15 s"] --> b["Matched to a street<br/>within 40 m, by heading"]
-    b --> c[("ride_points<br/>hypertable, 30 days")]
-    c --> d[("street_speed_hourly<br/>continuous aggregate")]
-    d --> e["ETA uses real speeds<br/>on streets with 6+ points"]
-    f["Off-route events"] --> g[("route_events<br/>hypertable")]
-    g --> h["3+ riders in 2 hours<br/>possible closure, route avoids it"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/diagram-tigerdata-dark.png">
+  <img src="docs/readme/diagram-tigerdata-light.png" alt="Ride data flow: GPS points are matched to streets, stored in a hypertable, summarised per street per hour, and used for the ETA; off-route events from 3+ riders in 2 hours flag a possible closure" width="820">
+</picture>
 
 A ride starts when you plan a route (rerouting continues the same ride) and ends on arrival, on exit or when the page closes. Rides are anonymous: a random ride id, no account. Speeds are only measured between points 0.5 to 60 s apart with GPS accuracy of 40 m or better, and anything over 15 m/s is treated as a GPS jump. Rides from the simulator on `/debug` are stored as simulated and never feed learning.
 

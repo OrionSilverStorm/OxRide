@@ -1,0 +1,7 @@
+flowchart LR
+    a("GPS points<br/>every 15 s") --> b("Matched to a street<br/>within 40 m, by heading")
+    b --> c[("ride_points<br/>hypertable, 30 days")]
+    c --> d[("street_speed_hourly<br/>continuous aggregate")]
+    d --> e("ETA uses real speeds<br/>on streets with 6+ points")
+    f("Off-route events") --> g[("route_events<br/>hypertable")]
+    g --> h("3+ riders in 2 hours<br/>possible closure, route avoids it")

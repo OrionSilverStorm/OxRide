@@ -1,0 +1,23 @@
+flowchart TB
+    subgraph phone["Phone browser · Next.js"]
+        ui("Map.tsx<br/>map, GPS, directions")
+        mic("useVoice<br/>records 16 kHz WAV")
+        spk("speak.ts<br/>plays the reply")
+        lg("useRideLog<br/>GPS every 15 s")
+    end
+    subgraph api["FastAPI on Vercel · /api"]
+        r("/route<br/>A* + time model")
+        v("/voice")
+        s("/speak")
+        rl("/rides")
+    end
+    ui --> r
+    mic --> v
+    spk --> s
+    lg --> rl
+    r --> meteo[("Open-Meteo<br/>hourly forecast")]
+    r --> tiger[("Tiger Data<br/>ride log")]
+    rl --> tiger
+    v --> gem("Gemini")
+    v --> nom("Nominatim")
+    s --> el("ElevenLabs")

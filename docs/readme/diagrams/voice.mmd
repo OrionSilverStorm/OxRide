@@ -1,0 +1,19 @@
+sequenceDiagram
+    actor You
+    participant App as Phone app
+    participant API as OxRide API
+    participant G as Gemini
+    participant N as Nominatim
+    participant E as ElevenLabs
+    You->>App: Hold the mic, "chill ride to the Rad Cam"
+    App->>API: POST /voice (WAV + position + current route)
+    API->>G: audio, time, position, route summary
+    G-->>API: new_route, profile chill, destination Radcliffe Camera
+    API->>N: Radcliffe Camera, Oxford only
+    N-->>API: 51.7534, -1.2540
+    API-->>App: action, destination, spoken reply
+    App->>API: POST /route (Chill, leaving now)
+    App->>API: POST /speak (the reply)
+    API->>E: text
+    E-->>API: mp3
+    API-->>App: mp3, played on the phone

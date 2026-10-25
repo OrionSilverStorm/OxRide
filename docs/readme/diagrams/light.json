@@ -1,0 +1,10 @@
+{"theme":"base","themeVariables":{
+ "fontFamily":"Inter, Helvetica, Arial, sans-serif","fontSize":"16px",
+ "background":"#FDF6E3","primaryColor":"#F4F0D9","primaryBorderColor":"#8DA101","primaryTextColor":"#5C6A72",
+ "secondaryColor":"#EFEBD4","tertiaryColor":"#EFEBD4","lineColor":"#939F91","textColor":"#5C6A72",
+ "clusterBkg":"#EFEBD4","clusterBorder":"#E6E2CC","titleColor":"#5C6A72","edgeLabelBackground":"#FDF6E3",
+ "actorBkg":"#F4F0D9","actorBorder":"#8DA101","actorTextColor":"#5C6A72","actorLineColor":"#939F91",
+ "signalColor":"#5C6A72","signalTextColor":"#5C6A72","labelBoxBkgColor":"#F4F0D9","labelBoxBorderColor":"#8DA101","labelTextColor":"#5C6A72",
+ "noteBkgColor":"#EFEBD4","noteBorderColor":"#E6E2CC","noteTextColor":"#5C6A72"},
+ "flowchart":{"curve":"basis","padding":16,"nodeSpacing":40,"rankSpacing":50},
+ "sequence":{"actorMargin":40,"mirrorActors":false}}
