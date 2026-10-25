@@ -105,12 +105,9 @@ def time_penalty(edge, ctx):
     bearing = first(edge.get("bearing"))
     lit = first(edge.get("lit"))
 
-    #darkness penalty
-    if ctx["dark"]:
-        if lit =="no":
-            p*=1.6
-        elif lit not in ("yes", "no"):
-            p*= 1.2
+    #darkness penalty: lit is True/False in the graph (build_graph fills gaps by road type)
+    if ctx.get("dark") and not lit:
+        p *= 1.6
 
 
     #Rush hour penalty
