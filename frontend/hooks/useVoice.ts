@@ -5,9 +5,9 @@
 //   tap    -> keeps listening; every sentence is a command; tap again to stop
 //
 // Two engines (the switch is in the ?voicelog panel, lib/voiceLog.ts):
-//   speech  the browser's speech-to-text turns your words into text (default)
-//   record  the mic is recorded and Gemini listens to the audio itself; tap to start,
-//           tap again to send (there is no "every sentence" mode without speech-to-text)
+//   record  the mic is recorded and Gemini listens to the audio itself (default); hold and
+//           let go to send, or tap to start and tap again to send
+//   speech  the browser's speech-to-text turns your words into text (unreliable on phones)
 // Every step is written to the voice log, so a failure on a phone can be read back.
 //
 // iPhones (Safari) behave differently from Chrome with speech-to-text, which this handles:
@@ -103,10 +103,10 @@ export function useVoice(
   onAudio: (audioB64: string, mime: string) => void,
 ) {
   const [mode, setMode] = useState<VoiceMode>("off");
-  const [engine, setEngine] = useState<MicEngine>("speech"); // of the current press
+  const [engine, setEngine] = useState<MicEngine>("record"); // of the current press
   const [error, setError] = useState<string | null>(null);
   const modeRef = useRef<VoiceMode>("off");
-  const engineRef = useRef<MicEngine>("speech");
+  const engineRef = useRef<MicEngine>("record");
   const rec = useRef<SpeechRec | null>(null); // the current listening session
   const recorder = useRef<Recorder | null>(null); // the current recording
   const heard = useRef<Heard[]>([]); // what the current session has heard so far
@@ -431,5 +431,5 @@ export function useVoice(
     };
   }, [abort]);
 
-  return { mode, engine, error, press, release, supported: !!recognizer() };
+  return { mode, engine, error, press, release, supported: canRecord() || !!recognizer() };
 }

@@ -61,11 +61,13 @@ export function formatLog(log: LogLine[]): string {
 export type MicEngine = "speech" | "record";
 const ENGINE_KEY = "oxride-mic-engine";
 
+// Default: record and let Gemini listen. The browser's speech-to-text often works once and
+// then hears nothing (especially on iPhones); it stays available as an option in ?voicelog.
 export function getMicEngine(): MicEngine {
   try {
-    return localStorage.getItem(ENGINE_KEY) === "record" ? "record" : "speech";
+    return localStorage.getItem(ENGINE_KEY) === "speech" ? "speech" : "record";
   } catch {
-    return "speech";
+    return "record";
   }
 }
 
