@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 
 const Map = dynamic(() => import("./Map"), {
   ssr: false,
-  loading: () => <div className="h-full w-full bg-neutral-200" />,
+  loading: () => <div className="map-loading h-full w-full bg-background" />,
 });
 
 export default Map;

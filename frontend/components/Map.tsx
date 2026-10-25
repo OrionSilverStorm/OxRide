@@ -2,25 +2,59 @@
 
 import "leaflet/dist/leaflet.css";
 import { useState, useEffect, useMemo, useRef } from "react";
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  Polyline,
-  ZoomControl,
-  useMap,
-  useMapEvents,
-} from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Polyline, useMap, useMapEvents } from "react-leaflet";
 
 import L from "leaflet";
-import { Ear, EarOff, LocateFixed, Mic, Volume2, VolumeX } from "lucide-react";
-import { getRoute, searchPlace, sendVoice, speak, type RouteResult } from "@/lib/api";
+import {
+  ArrowUp,
+  Bike,
+  Clock,
+  CornerUpLeft,
+  CornerUpRight,
+  Ear,
+  EarOff,
+  Flag,
+  Leaf,
+  LocateFixed,
+  MapPin,
+  Mic,
+  Moon,
+  Navigation,
+  Search,
+  Sun,
+  Volume2,
+  VolumeX,
+  X,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
+import { getRoute, searchPlace, sendVoice, speak, type Maneuver, type RouteResult } from "@/lib/api";
 import { cumulativeM, currentStepIndex, ON_ROUTE, projectOnRoute, stepsAlongM, updateOffRoute } from "@/lib/nav";
 import { parseWake } from "@/lib/voice";
+import { useTheme } from "@/hooks/useTheme";
 
 //define ride types
 type Profile = "chill" | "regular" | "fast";
 const PROFILES: Profile[] = ["fast", "regular", "chill"];
+const PROFILE_ICON: Record<Profile, LucideIcon> = { fast: Zap, regular: Bike, chill: Leaf };
+
+// Arrow for each kind of turn (banner and "then" row)
+const MANEUVER_ICON: Record<Maneuver, LucideIcon> = {
+  left: CornerUpLeft,
+  right: CornerUpRight,
+  straight: ArrowUp,
+  arrive: Flag,
+};
+
+// CARTO basemaps: light for the light palette, Dark Matter for the dark one
+const TILES = {
+  light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+  dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+};
+
+// Round floating map button (Google Maps style), at least 48px
+const FAB =
+  "pointer-events-auto flex size-12 items-center justify-center rounded-full bg-card text-foreground shadow-md disabled:opacity-50";
 
 // Props for UserMarker: the parent's state value + its setter
 interface UserMarkerProps {
@@ -49,6 +83,7 @@ interface Fix {
 }
 
 const REROUTE_GAP_MS = 8000; // don't ask for a new route more often than this
+const NO_SPEECH = "Voice commands need Chrome or Safari";
 
 // Speak with ElevenLabs (via /speak); the browser's own voice if that fails.
 // Returns a function that stops the sound.
@@ -113,19 +148,20 @@ function beep() {
 const OXFORD_CENTER: [number, number] = [51.752, -1.2577];
 const OXFORD_BOUNDS = L.latLngBounds([51.69, -1.37], [51.82, -1.14]);
 
+// Live position dot (colours come from globals.css, so it follows the theme)
 const userIcon = L.divIcon({
   className: "",
-  html: '<div style="width:16px;height:16px;background:#2563eb;border:3px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,.4)"></div>',
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
+  html: '<div class="user-dot"></div>',
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
 });
 
-// Red dot icon for the target pin, visually distinct from the blue user marker
+// Destination pin: a map-pin shape whose tip sits on the chosen point
 const targetIcon = L.divIcon({
-  className: "", // Remove Leaflet's default white box styling
-  html: '<div style="width:16px;height:16px;background:#dc2626;border:3px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,.4)"></div>', // Red dot with white border and soft shadow
-  iconSize: [16, 16], // Icon dimensions in px
-  iconAnchor: [8, 8], // Centre of the dot sits exactly on the clicked point
+  className: "target-pin", // Our class instead of Leaflet's default white box
+  html: '<svg width="32" height="40" viewBox="0 0 32 40"><path d="M16 39C16 39 30 24.5 30 15A14 14 0 0 0 2 15C2 24.5 16 39 16 39Z"/><circle cx="16" cy="15" r="5"/></svg>',
+  iconSize: [32, 40],
+  iconAnchor: [16, 39], // Tip of the pin
 });
 
 function TargetPin({ target, setTarget }: TargetPinProps) {
@@ -189,10 +225,14 @@ export default function Map() {
   const [voiceOn, setVoiceOn] = useState(true); // Spoken directions, on by default (the button mutes them)
   //////////////////////////////////////////////////////////////////////////
 
+  const [targetName, setTargetName] = useState<string | null>(null); // "Radcliffe Camera"; null = tapped on the map
+
   // Moves the target and removes the stale route line
-  const placeTarget = (p: L.LatLng) => {
+  const placeTarget = (p: L.LatLng, name: string | null = null) => {
     setTargetPos(p);
+    setTargetName(name);
     setNav(null);
+    setResults([]); // Close the suggestions
   };
 
   // Routing
@@ -226,7 +266,7 @@ export default function Map() {
       if (!hit) return console.warn("No results"); // Nothing found
       const p = L.latLng(hit.lat, hit.lon);
       if (!OXFORD_BOUNDS.contains(p)) return; // Safety check
-      placeTarget(p); // Drop the red pin
+      placeTarget(p, hit.name); // Drop the pin
       map?.flyTo(p, 16); // Move the map there
       sendPositions(profile, p); // A searched place: plan the route straight away
     } catch (err) {
@@ -260,9 +300,10 @@ export default function Map() {
   const pick = (h: Hit) => {
     const [lon, lat] = h.geometry.coordinates;
     const t = L.latLng(lat, lon);
-    placeTarget(t);
+    placeTarget(t, h.properties.name ?? h.properties.street ?? null);
     map?.flyTo([lat, lon], 16);
     setResults([]);
+    setQuery(h.properties.name ?? h.properties.street ?? "");
     sendPositions(profile, t); // Picked a place: plan the route straight away
   };
 
@@ -289,7 +330,15 @@ export default function Map() {
 
   //************************************************************************************* */ gemini api voice listen
   // A spoken command, from the mic button or after "Hey OxRide"
-  const [voiceStatus, setVoiceStatus] = useState<"" | "Listening…" | "Thinking…">(""); // Shown next to the mic
+  const [voiceStatus, setVoiceStatus] = useState<"" | "Listening…" | "Thinking…">(""); // Shown above the mic
+  // A short message above the mic instead of an alert (no modals while riding)
+  const [notice, setNotice] = useState("");
+  const noticeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const showNotice = (text: string) => {
+    setNotice(text);
+    clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(""), 4000);
+  };
   const handleCommand = async (text: string) => {
     let r;
     setVoiceStatus("Thinking…");
@@ -311,7 +360,7 @@ export default function Map() {
     if (r.settings.profile) setProfile(p); // Highlight chill/regular/fast
     if (r.action === "new_route" && r.settings.end) {
       const t = L.latLng(r.settings.end[0], r.settings.end[1]);
-      placeTarget(t); // Drop the red pin
+      placeTarget(t, r.settings.end_name ?? null); // Drop the pin
       map?.flyTo(t, 15);
       sendPositions(p, t); // Plan the route now
     } else if (r.action === "reroute") {
@@ -326,7 +375,7 @@ export default function Map() {
   // Tap the mic once and speak: it stops by itself when you stop talking
   const listen = () => {
     const SR = speechRecognition();
-    if (!SR) return alert("Speech recognition not supported");
+    if (!SR) return showNotice(NO_SPEECH);
     const rec = new SR();
     rec.lang = "en-GB";
     rec.onresult = (e) => handleRef.current(e.results[0][0].transcript); // What the user said
@@ -410,8 +459,47 @@ export default function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceOn, i, nav]); // Re-run only when the step changes, not every GPS update
 
+  // Light or dark: follows the phone, always dark while navigating, the toggle overrides both
+  const { theme, toggle: toggleTheme } = useTheme(!!nav);
+
+  // Distance to the next maneuver, for the "then" row of the banner
+  const toNext = nav && i + 1 < stepAlong.length ? Math.max(0, stepAlong[i + 1] - (proj?.alongM ?? 0)) : null;
+  const next = nav?.steps[i + 1];
+  const StepIcon = MANEUVER_ICON[step?.maneuver ?? "straight"];
+  const NextIcon = MANEUVER_ICON[next?.maneuver ?? "arrive"];
+
+  const toggleHandsFree = () => {
+    if (!handsFree && !speechRecognition()) return showNotice(NO_SPEECH);
+    setHandsFree((v) => !v);
+  };
+
+  // Ride type picker: chips under the search bar, a segmented row while navigating
+  const profileButtons = (onPick: (p: Profile) => void) =>
+    PROFILES.map((p) => {
+      const Icon = PROFILE_ICON[p];
+      const on = profile === p;
+      return (
+        <button
+          key={p}
+          onClick={() => onPick(p)}
+          aria-pressed={on}
+          className={`pointer-events-auto flex h-12 flex-1 items-center justify-center gap-2 rounded-full px-4 text-base capitalize shadow-md ${
+            on ? "bg-primary text-primary-foreground" : "bg-card text-foreground"
+          }`}
+        >
+          <Icon className="size-5" />
+          {p}
+        </button>
+      );
+    });
+
+  const status = voiceStatus || notice;
+
   return (
-    <div className="h-full w-full">
+    <div
+      className={`relative h-full w-full overflow-hidden bg-background text-foreground ${theme}`}
+      style={{ colorScheme: theme }}
+    >
       <MapContainer
         ref={setMap}
         center={OXFORD_CENTER}
@@ -420,199 +508,226 @@ export default function Map() {
         maxBounds={OXFORD_BOUNDS}
         maxBoundsViscosity={1.0}
         className="h-full w-full"
-        zoomControl={false} // turn off the default top-left +/- buttons...
+        zoomControl={false} // Pinch and scroll to zoom, like Google Maps on a phone
+        attributionControl={false} // Drawn ourselves above the bottom sheet so it stays visible
       >
-        <ZoomControl position="bottomright" />{" "}
-        {/* ...and put them bottom-right instead */}
-        <TileLayer
-          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution="&copy; OpenStreetMap contributors"
-        />
+        <TileLayer key={theme} url={TILES[theme]} subdomains="abcd" maxZoom={20} />
         <UserMarker pos={userPos} onFix={setFix} follow={!!nav} />
-        <TargetPin target={targetPos} setTarget={placeTarget} />
-        {route && (
-          <Polyline
-            positions={route}
-            pathOptions={{ color: "#2563eb", weight: 5, opacity: 0.8 }}
-          />
-        )}{" "}
-        {/* The planned route */}
+        <TargetPin target={targetPos} setTarget={(p) => placeTarget(p)} />
+        {/* The planned route: 6px primary line over a thin outline in the background colour */}
+        {route && <Polyline positions={route} pathOptions={{ className: "route-outline", weight: 9, opacity: 1 }} />}
+        {route && <Polyline positions={route} pathOptions={{ className: "route-line", weight: 6, opacity: 1 }} />}
       </MapContainer>
-      {/* Search bar */}
-      {/* Search bar: input + clear button + message, stacked */}
 
-      {nav && (
-        <>
-          {/* Top: current direction */}
-          <div className="absolute inset-x-3 top-3 z-[1000] rounded-2xl bg-teal-800 p-4 text-white shadow">
-            <p className="text-lg font-semibold">{step?.text}</p>
-            <p className="text-sm opacity-80">
-              then {nav.steps[i + 1]?.text ?? "arrive"}
-            </p>
+      {/* ---- Top: search + ride type (planning) or the next-turn banner (navigating) ---- */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col gap-2 p-4">
+        {!nav && (
+          <>
+            <div className="relative">
+              <div className="pointer-events-auto flex h-12 items-center gap-2 rounded-full bg-card pl-4 pr-1 shadow-md">
+                <Search className="size-5 shrink-0 text-muted-foreground" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)} // Keep state in sync
+                  onKeyDown={(e) => e.key === "Enter" && search()} // Search on Enter
+                  placeholder="Search Oxford"
+                  aria-label="Search Oxford"
+                  className="h-full min-w-0 flex-1 bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground"
+                />
+                {query && (
+                  <button
+                    onClick={() => setQuery("")}
+                    aria-label="Clear search"
+                    className="flex size-10 shrink-0 items-center justify-center rounded-full text-foreground"
+                  >
+                    <X className="size-5" />
+                  </button>
+                )}
+              </div>
+              {/* Suggestions as you type */}
+              {query.length >= 2 && results.length > 0 && (
+                <ul className="pointer-events-auto absolute inset-x-0 top-full mt-2 overflow-hidden rounded-2xl bg-card py-2 shadow-md">
+                  {results.map((h) => (
+                    <li key={h.properties.osm_id}>
+                      <button
+                        onClick={() => pick(h)}
+                        className="flex min-h-12 w-full items-center gap-4 px-4 text-left text-base text-foreground"
+                      >
+                        <MapPin className="size-5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{h.properties.name ?? h.properties.street}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {/* Ride type chips: only choose the type, the route starts with "Start" */}
+            <div className="flex gap-2">{profileButtons(setProfile)}</div>
+          </>
+        )}
+
+        {nav && (
+          <div className="pointer-events-auto overflow-hidden rounded-2xl shadow-md">
+            {/* Current instruction */}
+            <div className="flex items-start gap-4 bg-primary p-4 text-primary-foreground">
+              <StepIcon className="mt-1 size-10 shrink-0" strokeWidth={2.5} />
+              <p className="text-[28px] font-bold leading-tight">{step?.text}</p>
+            </div>
+            {/* What comes after it */}
+            <div className="flex items-center gap-2 bg-card px-4 py-2 text-base text-foreground">
+              <span>Then</span>
+              <NextIcon className="size-5 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{next?.text ?? "arrive"}</span>
+              {toNext !== null && <span className="shrink-0">in {fmt(toNext)}</span>}
+            </div>
           </div>
+        )}
 
-          {/* Bottom: time left, distance left, ETA, ride type, mute, exit */}
-          <div className="absolute inset-x-3 bottom-3 z-[1000] rounded-2xl bg-neutral-900 p-4 text-white shadow">
-            <div className="flex items-center justify-between">
+        {/* Right-hand map buttons, under the search bar or the banner */}
+        <div className="flex flex-col items-end gap-2">
+          <button
+            onClick={toggleTheme}
+            aria-label={theme === "dark" ? "Switch to light map" : "Switch to dark map"}
+            title={theme === "dark" ? "Light map" : "Dark map"}
+            className={FAB}
+          >
+            {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
+          </button>
+          <button
+            onClick={toggleHandsFree}
+            aria-label={handsFree ? "Stop listening for Hey OxRide" : "Listen for Hey OxRide"}
+            aria-pressed={handsFree}
+            title={handsFree ? 'Listening for "Hey OxRide"' : 'Hands-free: say "Hey OxRide"'}
+            className={`${FAB} ${handsFree ? "bg-primary text-primary-foreground" : ""}`}
+          >
+            {handsFree ? <Ear className="size-5" /> : <EarOff className="size-5" />}
+          </button>
+          {nav && (
+            <button
+              onClick={() => setVoiceOn((v) => !v)} // Click = user gesture, so the browser allows audio
+              aria-label={voiceOn ? "Mute directions" : "Speak directions"}
+              className={FAB}
+            >
+              {voiceOn ? <Volume2 className="size-5" /> : <VolumeX className="size-5" />}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ---- Bottom: attribution, mic, my location, then the sheet ---- */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1000] flex flex-col gap-2">
+        {/* What the voice command is doing right now */}
+        {status && (
+          <div className="flex justify-center px-4">
+            <div aria-live="polite" className="rounded-full bg-card px-4 py-2 text-base text-foreground shadow-md">
+              {status}
+            </div>
+          </div>
+        )}
+        <div className="relative flex min-h-[72px] items-end justify-between px-4">
+          <p className="pointer-events-auto max-w-[35%] rounded-lg bg-card/90 px-2 py-1 text-xs leading-snug text-foreground">
+            &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline">OpenStreetMap</a>{" "}
+            contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noreferrer" className="underline">CARTO</a>
+          </p>
+          {/* Push-to-talk: press, then speak ("chill ride to the Bodleian") */}
+          <button
+            onClick={listen}
+            disabled={handsFree} // Hands-free is already listening
+            aria-label="Speak a command"
+            className="pointer-events-auto absolute bottom-0 left-1/2 flex size-[72px] -translate-x-1/2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md disabled:opacity-50"
+          >
+            {voiceStatus === "Listening…" && (
+              <span className="absolute inset-0 animate-ping rounded-full bg-primary opacity-50" />
+            )}
+            <Mic className="relative size-8" />
+          </button>
+          <button
+            onClick={() => userPos && map?.flyTo(userPos, 16)} // Back to the blue dot
+            disabled={!userPos}
+            aria-label="Back to my location"
+            className={FAB}
+          >
+            <LocateFixed className="size-5 text-info" />
+          </button>
+        </div>
+
+        <div className="pointer-events-auto rounded-t-2xl bg-card px-4 pt-2 pb-[max(16px,env(safe-area-inset-bottom))] text-foreground shadow-md">
+          <div className="mx-auto mb-2 h-1 w-8 rounded-full bg-border" /> {/* sheet handle */}
+
+          {!nav && !targetPos && (
+            <div className="pb-2">
+              <p className="text-xl font-bold">Where to?</p>
+              <p className="text-base">Search, tap the map, or press the mic and say where.</p>
+            </div>
+          )}
+
+          {!nav && targetPos && (
+            <div className="flex flex-col gap-4">
               <div>
-                <p className="text-2xl font-semibold">
-                  {Math.max(1, Math.round(secs / 60))} min left
+                <p className="truncate text-xl font-bold">{targetName ?? "Dropped pin"}</p>
+                <p className="text-base">
+                  {userPos ? `${profile[0].toUpperCase()}${profile.slice(1)} ride from your location` : "Finding your location…"}
                 </p>
-                <p className="text-sm opacity-70">
-                  {fmt(left)} · arrive {eta}
-                </p>
-                {/* When to leave: only before you've really set off */}
-                {hint && (proj?.alongM ?? 0) < 100 && <p className="mt-1 text-sm text-amber-300">{hint}</p>}
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => setVoiceOn((v) => !v)} // Click = user gesture, so the browser allows audio
-                  aria-label={voiceOn ? "Mute directions" : "Speak directions"}
-                  className="rounded-full bg-neutral-700 px-4 py-2"
+                  onClick={() => sendPositions()}
+                  disabled={!userPos}
+                  className="flex h-12 flex-1 items-center justify-center gap-2 rounded-full bg-primary text-base font-bold text-primary-foreground disabled:opacity-50"
                 >
-                  {voiceOn ? <Volume2 className="size-5" /> : <VolumeX className="size-5" />}
+                  <Navigation className="size-5" />
+                  Start
                 </button>
                 <button
-                  onClick={() => setNav(null)}
-                  className="rounded-full bg-red-600 px-5 py-2 font-semibold"
+                  onClick={() => {
+                    setTargetPos(null);
+                    setTargetName(null);
+                  }}
+                  aria-label="Clear destination"
+                  className="flex size-12 items-center justify-center rounded-full bg-surface text-foreground"
                 >
-                  Exit
+                  <X className="size-5" />
                 </button>
               </div>
             </div>
-            {/* Change ride type mid-ride: re-plans from where the user is now */}
-            <div className="mt-3 flex gap-1">
-              {PROFILES.map((p) => (
-                <button
-                  key={p}
-                  onClick={() => {
-                    setProfile(p);
-                    sendPositions(p);
-                  }}
-                  className={`flex-1 rounded-full px-2 py-1 text-sm capitalize ${
-                    profile === p ? "bg-blue-600" : "bg-neutral-700"
-                  }`}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-
-      {!nav && (
-        <div className="absolute left-1/2 top-4 z-[1000] w-64 -translate-x-1/2">
-          <div className="relative">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)} // Keep state in sync
-              onKeyDown={(e) => e.key === "Enter" && search()} // Search on Enter
-              placeholder="Search Oxford..."
-              className="w-full rounded bg-white py-2 pl-3 pr-8 shadow"
-            />
-            {query && (
-              <button
-                onClick={() => {
-                  setQuery("");
-                }} // Clear text and message
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-          {/* autocomplete searchbar */}
-          {query.length >= 2 && results.length > 0 && (
-            <ul className="mt-1 rounded bg-white text-sm shadow">
-              {results.map((h) => (
-                <li
-                  key={h.properties.osm_id}
-                  onClick={() => pick(h)}
-                  className="cursor-pointer px-3 py-2 hover:bg-gray-100"
-                >
-                  {h.properties.name ?? h.properties.street}
-                </li>
-              ))}
-            </ul>
           )}
-          {/* // Inside the search bar wrapper div, after the results list (so it sits
-        under the input) */}
-          <div className="mt-1 flex gap-1">
-            {/* Row of buttons: small top margin, small gap between them */}
-            {PROFILES.map(
-              (
-                p, // Loop over ["chill", "regular", "fast"], one button each
-              ) => (
-                <button
-                  key={p} // React needs a unique key per item in a list
-                  onClick={() => setProfile(p)} // Only choose the ride type: the route starts with "Drop a Pin and Ride"
-                  className={`flex-1 rounded px-2 py-1 text-sm capitalize shadow ${
-                    // flex-1: equal widths; capitalize: "chill" shows as "Chill"
-                    profile === p ? "bg-blue-600 text-white" : "bg-white" // Active one is blue, the rest are white
-                  }`}
-                >
-                  {p} {/* Button label: the ride type name */}
-                </button>
-              ),
-            )}
-          </div>
-        </div>
-      )}
 
-      {/* Button inside the wrapper div, outside <MapContainer> */}
-      {/*z-[1000] sits above Leaflet's panes */}
-      {!nav && (
-        <button
-          onClick={() => sendPositions()}
-          className="absolute bottom-6 left-1/2 z-[1000] -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
-          disabled={!userPos || !targetPos}
-        >
-          Drop a Pin and Ride
-        </button>
-      )}
-      <button
-        onClick={() => userPos && map?.flyTo(userPos, 16)} // Fly back to the blue dot
-        disabled={!userPos}
-        aria-label="Back to my location"
-        className={`absolute left-3 z-[1000] rounded bg-white px-3 py-2 shadow disabled:opacity-50 ${
-          nav ? "bottom-44" : "bottom-20" // Higher when the navigation bar is showing
-        }`}
-      >
-        <LocateFixed className="size-5" />
-      </button>
-      <button
-        onClick={listen} // Press, then speak: "chill ride to the Bodleian"
-        disabled={handsFree} // Hands-free is already listening
-        aria-label="Speak a command"
-        className={`absolute left-3 z-[1000] rounded bg-white px-3 py-2 shadow disabled:opacity-50 ${nav ? "bottom-56" : "bottom-36"}`}
-      >
-        <Mic className="size-5" />
-      </button>
-      {/* What the voice command is doing right now */}
-      {voiceStatus && (
-        <div
-          aria-live="polite"
-          className={`absolute left-16 z-[1000] rounded-full bg-neutral-900 px-3 py-2 text-sm text-white shadow ${
-            nav ? "bottom-56" : "bottom-36"
-          }`}
-        >
-          {voiceStatus}
+          {nav && (
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={() => setNav(null)}
+                  aria-label="Exit navigation"
+                  className="flex size-12 shrink-0 items-center justify-center rounded-full bg-surface text-foreground"
+                >
+                  <X className="size-6" />
+                </button>
+                <div className="min-w-0 flex-1 text-center">
+                  <p className="text-[28px] font-bold leading-tight">{Math.max(1, Math.round(secs / 60))} min</p>
+                  <p className="text-base">
+                    {fmt(left)} · arrive {eta}
+                  </p>
+                </div>
+                <div className="size-12 shrink-0" /> {/* balances the exit button so the time stays centred */}
+              </div>
+              {/* When to leave: only before you've really set off */}
+              {hint && (proj?.alongM ?? 0) < 100 && (
+                <p className="flex items-start gap-2 text-base">
+                  <Clock className="mt-0.5 size-5 shrink-0 text-warning" />
+                  {hint}
+                </p>
+              )}
+              {/* Change ride type mid-ride: re-plans from where the user is now */}
+              <div className="flex gap-2">
+                {profileButtons((p) => {
+                  setProfile(p);
+                  sendPositions(p);
+                })}
+              </div>
+            </div>
+          )}
         </div>
-      )}
-      <button
-        onClick={() => {
-          if (!handsFree && !speechRecognition()) return alert("Speech recognition not supported");
-          setHandsFree((v) => !v);
-        }}
-        aria-label={handsFree ? "Stop listening for Hey OxRide" : "Listen for Hey OxRide"}
-        title={handsFree ? "Listening for \"Hey OxRide\"" : "Hands-free: say \"Hey OxRide\""}
-        className={`absolute left-3 z-[1000] rounded px-3 py-2 shadow ${
-          handsFree ? "bg-blue-600 text-white" : "bg-white"
-        } ${nav ? "bottom-[17rem]" : "bottom-52"}`}
-      >
-        {handsFree ? <Ear className="size-5" /> : <EarOff className="size-5" />}
-      </button>
+      </div>
     </div>
   );
 }
