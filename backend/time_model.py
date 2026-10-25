@@ -129,7 +129,7 @@ def headwind(bearing, ctx):
 
 
 def time_penalty(edge, ctx):
-    p = 1.0
+    p = 1.0 
 
     def first(v):
         if isinstance(v, list):
@@ -141,9 +141,14 @@ def time_penalty(edge, ctx):
     bearing = first(edge.get("bearing"))
     lit = first(edge.get("lit"))
 
-    #darkness penalty: lit is True/False in the graph (build_graph fills gaps by road type)
-    if ctx.get("dark") and not lit:
-        p *= 1.6
+    #darkness penalty
+    if ctx["dark"]:
+        if lit is False or lit == "no":
+            p *=1.6
+        elif lit is True or lit == "yes":
+            pass
+        else:
+            p *= 1.2
 
 
     #Rush hour penalty
