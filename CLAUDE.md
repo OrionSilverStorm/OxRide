@@ -51,10 +51,11 @@ frontend/
   app/navigate/    placeholder (navigation currently happens in Map.tsx)
   app/debug/       routing debug panel (components/debug/)
   components/      Map (search, ride type, route, directions banner, voice command, mute), placeholders
-  hooks/           useVoice (mic: hold to talk, or tap to keep listening); the others are placeholders
+  hooks/           useVoice (mic: hold to talk, or tap to keep listening), useTheme (light/dark + toggle); the others are placeholders
   lib/api.ts       calls to the backend
   lib/nav.ts       where the rider is along the route: current step, distance left, off route (+ nav.test.ts)
   lib/speak.ts     say(): ElevenLabs via /speak, browser voice fallback; isSpeaking() so the mic ignores the app
+  lib/theme.ts     which Everforest palette shows: phone setting, dark while navigating, manual toggle (+ theme.test.ts)
   lib/mock.ts      fake data until the backend is ready
   scripts/         dev-api.mjs (cross-platform backend start), test.mjs (npm test)
   public/          manifest.json, app icons, dragon logo

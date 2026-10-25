@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* dark: utilities apply inside an element with the .dark class (see lib/theme.ts) */
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -10,35 +11,41 @@
   --font-sans: var(--font-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
+  --color-sidebar-ring: var(--ring);
+  --color-sidebar-border: var(--border);
+  --color-sidebar-accent-foreground: var(--foreground);
+  --color-sidebar-accent: var(--surface);
+  --color-sidebar-primary-foreground: var(--primary-foreground);
+  --color-sidebar-primary: var(--primary);
+  --color-sidebar-foreground: var(--foreground);
+  --color-sidebar: var(--card);
+  --color-chart-5: var(--info);
+  --color-chart-4: var(--danger);
+  --color-chart-3: var(--warning);
+  --color-chart-2: var(--secondary-accent);
+  --color-chart-1: var(--primary);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
+  --color-destructive: var(--danger);
+  --color-accent-foreground: var(--foreground);
+  --color-accent: var(--surface);
   --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
+  --color-muted: var(--surface);
+  --color-secondary-foreground: var(--foreground);
+  --color-secondary: var(--surface);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
+  --color-popover-foreground: var(--foreground);
+  --color-popover: var(--card);
+  --color-card-foreground: var(--foreground);
   --color-card: var(--card);
+  /* Everforest extras */
+  --color-surface: var(--surface);
+  --color-secondary-accent: var(--secondary-accent);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -48,73 +55,71 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Everforest, medium contrast. The only place hex colours are written. */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --ef-dark-bg: #2d353b;
+  --ef-dark-card: #343f44;
+  --ef-dark-surface: #3d484d;
+  --ef-dark-border: #475258;
+  --ef-dark-text: #d3c6aa;
+  --ef-dark-muted: #859289;
+  --ef-dark-primary: #a7c080;
+  --ef-dark-secondary: #83c092;
+  --ef-dark-warning: #e69875;
+  --ef-dark-danger: #e67e80;
+  --ef-dark-info: #7fbbb3;
+
+  --ef-light-bg: #fdf6e3;
+  --ef-light-card: #f4f0d9;
+  --ef-light-surface: #efebd4;
+  --ef-light-border: #e6e2cc;
+  --ef-light-text: #5c6a72;
+  --ef-light-muted: #939f91;
+  --ef-light-primary: #8da101;
+  --ef-light-secondary: #35a77c;
+  --ef-light-warning: #f57d26;
+  --ef-light-danger: #f85552;
+  --ef-light-info: #3a94c5;
+
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
 }
 
+/* Light palette (daytime planning screen): the default */
+:root,
+.light {
+  --background: var(--ef-light-bg);
+  --foreground: var(--ef-light-text);
+  --card: var(--ef-light-card);
+  --surface: var(--ef-light-surface);
+  --border: var(--ef-light-border);
+  --input: var(--ef-light-border);
+  --muted-foreground: var(--ef-light-muted);
+  --primary: var(--ef-light-primary);
+  /* dark text on the light primary: the light text colour is too faint on it in sunlight */
+  --primary-foreground: var(--ef-dark-bg);
+  --secondary-accent: var(--ef-light-secondary);
+  --warning: var(--ef-light-warning);
+  --danger: var(--ef-light-danger);
+  --info: var(--ef-light-info);
+  --ring: var(--ef-light-primary);
+}
+
+/* Dark palette (night, and the navigation screen) */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: var(--ef-dark-bg);
+  --foreground: var(--ef-dark-text);
+  --card: var(--ef-dark-card);
+  --surface: var(--ef-dark-surface);
+  --border: var(--ef-dark-border);
+  --input: var(--ef-dark-border);
+  --muted-foreground: var(--ef-dark-muted);
+  --primary: var(--ef-dark-primary);
+  --primary-foreground: var(--ef-dark-bg);
+  --secondary-accent: var(--ef-dark-secondary);
+  --warning: var(--ef-dark-warning);
+  --danger: var(--ef-dark-danger);
+  --info: var(--ef-dark-info);
+  --ring: var(--ef-dark-primary);
 }
 
 @layer base {
@@ -127,4 +132,52 @@
   html {
     @apply font-sans;
   }
+}
+
+/* Placeholder while the map loads: follow the phone so a dark phone doesn't flash light */
+@media (prefers-color-scheme: dark) {
+  .map-loading {
+    background: var(--ef-dark-bg);
+  }
+}
+
+/* --- Leaflet ------------------------------------------------------------------------- */
+
+.leaflet-container {
+  background: var(--background);
+  font-family: inherit;
+}
+
+/* Route line: 6px primary with a thin outline in the background colour (two stacked lines) */
+.route-outline {
+  stroke: var(--background);
+}
+.route-line {
+  stroke: var(--primary);
+}
+
+/* Live position: info-coloured dot with a soft halo */
+.user-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: var(--info);
+  border: 3px solid var(--background);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--info) 25%, transparent);
+}
+
+/* Destination pin */
+.target-pin svg {
+  fill: var(--danger);
+  stroke: var(--background);
+  stroke-width: 1.5;
+}
+.target-pin circle {
+  fill: var(--background);
+  stroke: none;
+}
+
+/* Dark map: OpenStreetMap tiles darkened to sit with the Everforest dark palette */
+.tiles-dark {
+  filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.5);
 }

@@ -98,12 +98,20 @@ export function useVoice(onCommand: (text: string) => void) {
       }
     };
     r.onerror = (e) => {
-      if (e.error === "no-speech" || e.error === "aborted") return; // normal: silence, or we stopped it
-      setError(MIC_ERRORS[e.error] ?? `Microphone error: ${e.error}`);
-      if (e.error in MIC_ERRORS) {
+      if (e.error === "no-speech") {
+        // silence: fine while listening non-stop; when holding, say so (in onend)
+        return;
+      }
+      if (e.error === "aborted") {
+        // we never get this for our own stops (handlers are removed first): something else took the mic
+        setError("The microphone was taken by another tab or app. Close other OxRide tabs and try again.");
         abort();
         setBoth("off");
+        return;
       }
+      setError(MIC_ERRORS[e.error] ?? `Microphone error: ${e.error}`);
+      abort();
+      setBoth("off");
     };
     r.onend = () => {
       if (rec.current !== r) return; // an old session
@@ -121,6 +129,7 @@ export function useVoice(onCommand: (text: string) => void) {
       heard.current = [];
       setBoth("off");
       if (text) onCommandRef.current(text);
+      else setError("Didn't catch that. Hold the mic and speak, then let go.");
     };
     rec.current = r;
     try {
@@ -162,6 +171,22 @@ export function useVoice(onCommand: (text: string) => void) {
     }
   }, [abort]);
 
-  useEffect(() => abort, [abort]); // stop listening when the page closes
+  // Let go of the microphone when the page is hidden or closed, so another tab (or this
+  // one after a refresh) can use it; Chrome lets only one page do speech recognition.
+  useEffect(() => {
+    const release = () => {
+      if (document.visibilityState === "hidden") {
+        abort();
+        setBoth("off");
+      }
+    };
+    document.addEventListener("visibilitychange", release);
+    window.addEventListener("pagehide", abort);
+    return () => {
+      document.removeEventListener("visibilitychange", release);
+      window.removeEventListener("pagehide", abort);
+      abort();
+    };
+  }, [abort]);
   return { mode, error, press, release, supported: !!recognizer() };
 }
