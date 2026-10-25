@@ -1,0 +1,3 @@
+# Only for build_graph.py (downloads OSM data and builds oxford_graph.pkl).
+-r requirements.txt
+osmnx

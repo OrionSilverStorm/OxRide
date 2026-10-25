@@ -140,23 +140,13 @@ RHO = 1.225       # Air density
 MAX_SPEED = 15 * 0.44704  # 15 mph: what Lime/Voi e-bikes are limited to in the UK
 SPEED_SCALE = 1.0
 
-# Same names as routing.PROFILES and the API.
-PROFILES = {
-    "fast": {
-        "power": 160,
-        "cda": 0.32,
-        "crr": 0.005
-    },
-    "regular": {
-        "power": 80,
-        "cda": 0.50,
-        "crr": 0.007
-    },
-    "chill": {
-        "power": 55,
-        "cda": 0.55,
-        "crr": 0.008
-    }
+# One rider for every profile: fast/regular/chill only change which roads the route
+# uses, not how fast you ride. 160 W would do ~18 mph on the flat, so the 15 mph cap
+# sets the flat speed; hills and headwind slow you down from there.
+RIDER = {
+    "power": 160,
+    "cda": 0.32,
+    "crr": 0.005
 }
 
 def power_needed(v, grade, head, pr):
@@ -173,8 +163,8 @@ def power_needed(v, grade, head, pr):
 
     return (gravity + rolling + air) * v
 
-def speed_ms(grade, head, profile):
-    pr = PROFILES[profile]
+def speed_ms(grade, head):
+    pr = RIDER
 
     low = 0.5
     high = 25.0
@@ -198,7 +188,7 @@ def speed_ms(grade, head, profile):
 
 
 
-def eta_minutes(edges, ctx, profile):
+def eta_minutes(edges, ctx):
     total_seconds = 0.0
 
     for edge in edges:
@@ -210,7 +200,7 @@ def eta_minutes(edges, ctx, profile):
         head = headwind(bearing, ctx)
 
         # Predict cycling speed
-        speed = speed_ms(grade, head, profile)
+        speed = speed_ms(grade, head)
 
         # Rain reduces speed by 10%
         if ctx["rain_mm"] > 0:
@@ -219,7 +209,7 @@ def eta_minutes(edges, ctx, profile):
         # Avoid division by zero
         speed = max(speed, 0.5)
 
-        # Time for this road segment
+        # Time for road segment
         time_seconds = length / speed
 
         # Add junction delay
@@ -229,48 +219,84 @@ def eta_minutes(edges, ctx, profile):
 
 
 
-def best_departures(start: tuple[float, float], end: tuple[float, float],
-                    profile: str) -> list[dict]:
-    """ETA and score for each 15-minute slot over the next three hours."""
-    raise NotImplementedError
+def best_departures(route_fn, profile="regular", now=None):
+    if now is None:
+        now = datetime.now(timezone.utc)
 
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
 
-if __name__ == "__main__":
-    # Quick self-test: python time_model.py
-    ctx = {
-        "wind_ms": 10,
-        "wind_from_deg": 270,
-        "rain_mm": 0
-    }
+    now = now.astimezone(timezone.utc)
 
-    headwind_route = [
-        {"length": 1000, "grade": 0, "bearing": 270}
+    #Rounded to next 15 minutes
+    start = now.replace(second=0, microsecond=0)
+    minutes = (-start.minute) % 15
+
+    if minutes == 0 and (now.second or now.microsecond):
+        minutes = 15
+
+    start += timedelta(minutes=minutes)
+
+    slots = []
+
+    for k in range(13):
+        t = start + timedelta(minutes=15 * k)
+
+        ctx = get_context(t)
+        edges = route_fn(ctx)
+        eta = eta_minutes(edges, ctx)
+
+        rain_prob = ctx["rain_prob"]
+
+        # Rain and darkness penalties
+        score = eta * (1 + 0.5 * rain_prob)
+        score += 5 if ctx["dark"] else 0
+
+        slots.append({
+            "depart_local": t.astimezone(London).isoformat(),
+            "depart_utc": t.isoformat(),
+            "eta_min": eta,
+            "rain_prob": rain_prob,
+            "dark": ctx["dark"],
+            "score": score,
+            "best": False
+        })
+
+    best_index = min(
+        range(len(slots)),
+        key=lambda i: slots[i]["score"]
+    )
+
+    slots[best_index]["best"] = True
+
+    return slots
+
+SNAPSHOT = os.path.join(
+    os.path.dirname(__file__),
+    "weather_snapshot.json"
+)
+
+def get_weather():
+    try:
+        data = fetch_weather()
+
+        with open(SNAPSHOT, "w") as f:
+            json.dump(data, f)
+
+    except Exception:
+        with open(SNAPSHOT) as f:
+            data = json.load(f)
+
+    return data
+
+def mock_route_fn(ctx):
+    return [
+        {
+            "length": 1000,
+            "grade": 0,
+            "bearing": 270,
+            "surface": "asphalt",
+            "lit": "yes"
+        }
     ]
 
-    tailwind_route = [
-        {"length": 1000, "grade": 0, "bearing": 90}
-    ]
-
-    head_eta = eta_minutes(
-        headwind_route, ctx, "regular"
-    )
-
-    tail_eta = eta_minutes(
-        tailwind_route, ctx, "regular"
-    )
-
-    print("Headwind ETA:", head_eta)
-    print("Tailwind ETA:", tail_eta)
-
-    assert head_eta > tail_eta
-    print("Stage 6 passed")
-
-    wet_ctx = ctx.copy()
-    wet_ctx["rain_mm"] = 1.0
-
-    wet_eta = eta_minutes(
-        headwind_route, wet_ctx, "regular"
-    )
-
-    assert wet_eta > head_eta
-    print("Rain test passed")

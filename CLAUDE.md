@@ -25,7 +25,7 @@ If we fall behind, cut from the bottom up (nice to have first, e.g. Tiger Data, 
 
 - **Backend (Python):** fastapi + uvicorn, osmnx + networkx (Oxford bike graph), our own A* with `heapq` (do not use networkx's shortest path), numpy, httpx, google-genai (Gemini, takes audio directly, no separate speech-to-text), elevenlabs, psycopg (Tiger Data = Postgres)
 - **Frontend (TypeScript, thin):** Next.js, Tailwind (or Bootstrap) + shadcn/ui, react-leaflet, PWA (`manifest.json` + icons)
-- **Hosting:** frontend on Vercel, backend on Vultr
+- **Hosting:** frontend and backend on Vercel as one project (`vercel.json` services): `/api/*` goes to the FastAPI backend, everything else to Next.js
 - **Data:** OSM via osmnx (roads, cycleways, surface, lit, names), Nominatim (search, 1 req/s, needs User-Agent, call from backend), OpenTopoData (elevation, 100 points/request, ~1 req/s), Open-Meteo (hourly wind, rain, temperature, sunrise/sunset). Optional: DfT traffic counts, STATS19.
 - **Browser APIs:** Geolocation `watchPosition`, microphone (`getUserMedia` + `MediaRecorder`), Wake Lock (screen on while navigating). All need HTTPS (Vercel). Web Speech API is the free fallback for speech in and out.
 - Map tiles: OSM or CARTO, attribution must stay visible.
@@ -109,6 +109,7 @@ VoiceResult   {action:"new_route"|"reroute"|"answer", settings:{...RouteRequest 
    - Elevation for every node from OpenTopoData (100 points per request, ~1 request/s).
    - Per edge: `grade = (elev_end - elev_start) / length`, plus `osmnx.bearing.add_edge_bearings`.
    - Fill missing `lit` and `surface` with defaults by `highway` type.
+   - Needs `pip install -r backend/requirements-build.txt` (osmnx); the server itself only needs `requirements.txt`.
    - Save the graph as a pickle, `backend/oxford_graph.pkl` (GraphML turns `lit` into text). `routing.load_graph(path)` loads it at startup. Print how many edges had real vs defaulted `lit`/`surface`.
    - `highway`, `name`, `surface`, `lit` are single values (lists flattened, gaps filled). `surface` is one of `asphalt | gravel | cobbles`.
 
@@ -202,6 +203,57 @@ What it is: a small hint, not the main feature. The route is always planned for 
 - Profiles: `fast`, `regular`, `chill` (same names in the UI, API and code). Each profile is a different set of cost factors in `routing.PROFILES`: chill = cycle paths and quiet roads even if longer, regular = prefers cycle paths and avoids repeated climbs, fast = mostly the shortest route.
 - The route depends on departure time: darkness (prefer lit streets), rush hour (quiet roads over main roads), wind and rain, temperature, hills (suffer score), and Oxford-specific cycling restrictions (avoid Cornmarket and Queen Street during restricted hours).
 
+## Design system: Everforest
+
+All UI uses the Everforest colour theme, medium contrast. Use only the colours below. Do not add other hex values or Tailwind default colours.
+
+Define them once as CSS variables in globals.css and map them into the Tailwind config and the shadcn theme. Components use the semantic names (background, card, primary and so on), never raw hex.
+
+### Dark palette (night, and the navigation screen)
+- background: #2D353B
+- card / bottom sheet: #343F44
+- raised surface / input: #3D484D
+- border: #475258
+- text: #D3C6AA
+- muted text: #859289
+- primary (route line, main buttons): #A7C080
+- secondary accent: #83C092
+- warning (rain, wind, steep hills): #E69875
+- danger (off route, closed road): #E67E80
+- info: #7FBBB3
+
+### Light palette (daytime planning screen)
+- background: #FDF6E3
+- card / bottom sheet: #F4F0D9
+- raised surface / input: #EFEBD4
+- border: #E6E2CC
+- text: #5C6A72
+- muted text: #939F91
+- primary: #8DA101
+- secondary accent: #35A77C
+- warning: #F57D26
+- danger: #F85552
+- info: #3A94C5
+
+### When each palette shows
+Follow the phone's setting by default. Switch to dark automatically from sunset to sunrise, using the sunset time we already fetch from Open-Meteo. The navigation screen is always dark so it is easy to read on a bike. A manual toggle overrides all of this.
+
+### Shape and layout
+- Mobile first, 390px wide. The map fills the screen and the controls float over it.
+- Bottom sheet for planning. A banner at the top for the next turn while navigating.
+- Rounded corners (rounded-2xl on cards), one soft shadow level, 8px spacing grid.
+- Font: Inter. Next-turn text is 28 to 32px bold, secondary text 14 to 16px.
+- Every button is at least 48px tall. The push-to-talk button is 72px and centred, and it pulses while listening.
+- Route line is 6px in the primary colour with a thin outline in the background colour. Alternative routes are muted grey.
+- Charts use one colour with no gridlines. The best departure slot is highlighted in the warning colour.
+- Map tiles: a light CARTO basemap in the light palette and CARTO Dark Matter in the dark palette. Keep the OpenStreetMap attribution visible.
+
+### Rules
+- Text must keep a readable contrast against its background in direct sunlight. Do not put muted text on a raised surface.
+- No emoji, no gradients, no purple, no more than two font weights per screen.
+- No modals while navigating.
+- Check each new screen against this section. After building one, screenshot it and fix anything that breaks these rules.
+
 ## Endpoints
 
 - `POST /route`: start, end, profile, departure time in; route, stats, steps out. Rerouting reuses it with the current position as `start`.
@@ -234,7 +286,7 @@ Edge cost = length x road-type factor x surface factor + hill penalty, all multi
 - **Algorithm:** `build_graph.py`, `routing.py`, `navigation.py`
 - **Time and data:** `time_model.py`, `db.py`
 - **Frontend and integration:** `frontend/` (map, panels, charts, navigation screen, live location, off-route detection, simulate ride, push-to-talk button)
-- **AI and pitch:** `ai.py`, `main.py`, the voice loop, place search, PWA setup, Vultr deploy, Devpost, demo script
+- **AI and pitch:** `ai.py`, `main.py`, the voice loop, place search, PWA setup, Vercel deploy, Devpost, demo script
 
 Only edit your own files; ask the owner if you need a change in theirs.
 

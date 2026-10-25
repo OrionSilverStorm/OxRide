@@ -143,7 +143,7 @@ def describe_path(path, profile, ctx, eta_profile):
         h["cost"] += r["cost"]
 
     try:
-        eta = round(time_model.eta_minutes(edges, ctx, eta_profile), 1)
+        eta = round(time_model.eta_minutes(edges, ctx), 1)
     except Exception as e:  # the ETA model is still being written
         eta = None
         print(f"debug: eta_minutes failed: {e!r}")

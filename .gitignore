@@ -16,3 +16,6 @@ backend/cache/
 .vscode/
 .idea/
 .DS_Store
+
+# Vercel CLI (vercel dev / vercel link)
+.vercel

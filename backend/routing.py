@@ -243,7 +243,7 @@ def find_route(start, end, profile_name, ctx):
         "distance_m": round(distance),
         "climb_m": round(climb),
         # speed model: slower uphill and into a headwind, capped at 15 mph
-        "eta_min": round(time_model.eta_minutes(edges, ctx, profile_name), 1),
+        "eta_min": round(time_model.eta_minutes(edges, ctx), 1),
         "cycleway_share": round(cycleway / distance, 2) if distance else 0.0,
         "lit_share": round(lit / distance, 2) if distance else 0.0,
     }

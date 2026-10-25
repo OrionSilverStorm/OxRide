@@ -5,9 +5,9 @@ const nextConfig: NextConfig = {
   experimental: {
     agentFeedback: true,
   },
-  // The browser only ever talks to this site (/api/...); Next forwards it to the
-  // backend. So the Vultr backend needs no HTTPS certificate and no CORS.
-  // On Vercel set BACKEND_URL, e.g. http://<vultr-ip>:8000
+  // The browser only ever calls this site (/api/...). Locally (npm run dev) Next
+  // forwards /api to uvicorn. On Vercel, vercel.json sends /api to the backend
+  // service before Next sees it, so this rewrite is only used locally.
   async rewrites() {
     const backend = process.env.BACKEND_URL ?? "http://localhost:8000";
     return [{ source: "/api/:path*", destination: `${backend}/:path*` }];
