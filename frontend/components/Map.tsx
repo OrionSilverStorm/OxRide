@@ -290,9 +290,18 @@ export default function Map() {
   //************************************************************************************* */ gemini api voice listen
   // A spoken command, from the mic button or after "Hey OxRide"
   const [voiceStatus, setVoiceStatus] = useState<"" | "Listening…" | "Thinking…">(""); // Shown next to the mic
+  // What it heard and what it answered, shown for a few seconds so a mishearing is obvious
+  const [caption, setCaption] = useState<{ heard: string; reply: string | null } | null>(null);
+  const captionTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const showCaption = (heard: string, reply: string | null) => {
+    clearTimeout(captionTimer.current);
+    setCaption({ heard, reply });
+    if (reply) captionTimer.current = setTimeout(() => setCaption(null), 8000);
+  };
   const handleCommand = async (text: string) => {
     let r;
     setVoiceStatus("Thinking…");
+    showCaption(text, null);
     try {
       // Gemini (via /voice) works out the place and ride type, and finds the place's coordinates
       r = await sendVoice({
@@ -301,11 +310,13 @@ export default function Map() {
         route: nav ?? undefined,
       });
     } catch {
+      showCaption(text, "Sorry, I couldn't reach OxRide.");
       say("Sorry, I couldn't reach OxRide.");
       return;
     } finally {
       setVoiceStatus("");
     }
+    showCaption(text, r.reply);
     say(r.reply); // Spoken reply (ElevenLabs): the user just asked, so it's not muted
     const p = (r.settings.profile as Profile | undefined) ?? profile;
     if (r.settings.profile) setProfile(p); // Highlight chill/regular/fast
@@ -590,14 +601,16 @@ export default function Map() {
         <Mic className="size-5" />
       </button>
       {/* What the voice command is doing right now */}
-      {voiceStatus && (
+      {(voiceStatus || caption) && (
         <div
           aria-live="polite"
-          className={`absolute left-16 z-[1000] rounded-full bg-neutral-900 px-3 py-2 text-sm text-white shadow ${
+          className={`absolute left-16 right-3 z-[1000] max-w-xs rounded-2xl bg-neutral-900 px-3 py-2 text-sm text-white shadow ${
             nav ? "bottom-56" : "bottom-36"
           }`}
         >
-          {voiceStatus}
+          {voiceStatus && <p className="font-semibold">{voiceStatus}</p>}
+          {caption && <p className="opacity-70">Heard: “{caption.heard}”</p>}
+          {caption?.reply && <p>{caption.reply}</p>}
         </div>
       )}
       <button

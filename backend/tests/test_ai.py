@@ -300,3 +300,68 @@ def test_search_endpoint_reports_outage(client, monkeypatch):
         raise ai.httpx.ConnectError("down")
     monkeypatch.setattr(ai, "search_place", down)
     assert client.get("/search?q=Jericho").status_code == 502
+
+
+
+# --- Oxford names and the no-Gemini Plan B ----------------------------------------------
+
+@pytest.mark.parametrize("said,name", [
+    ("univ", "University College"), ("the Rad Cam", "Radcliffe Camera"), ("maudlin", "Magdalen College"),
+    ("Magdalene College", "Magdalen College"), ("the Bod", "Bodleian Library"), ("the JR", "John Radcliffe Hospital"),
+    ("teddy hall", "St Edmund Hall"), ("Catz", "St Catherine's College"), ("the station", "Oxford railway station"),
+])
+def test_oxford_nicknames(said, name):
+    assert ai.oxford_name(said) == name
+
+
+def test_unknown_places_are_left_alone():
+    assert ai.oxford_name("Cowley Road") is None
+    assert ai.oxford_name(None) is None
+
+
+def test_gemini_is_told_the_nicknames(fake_gemini):
+    ai.interpret_voice(None, "take me to univ", None, None)
+    system = fake_gemini.calls[0]["config"].system_instruction
+    assert "univ" in system and "University College" in system and "maudlin" in system
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("take me to univ", ("new_route", "University College", None)),
+    ("Take me to the Rad Cam please", ("new_route", "Radcliffe Camera", None)),
+    ("can you take me to the station", ("new_route", "Oxford railway station", None)),
+    ("go to Cowley Road", ("new_route", "Cowley Road", None)),
+    ("take me to Jericho the quiet way", ("new_route", "Jericho", "chill")),
+    ("take me a quiet way to Jericho", None),  # not a "to <place>" sentence: left to Gemini
+    ("quieter route please", ("reroute", None, "chill")),
+    ("faster", ("reroute", None, "fast")),
+    ("how long left?", None),
+    ("will it rain?", None),
+])
+def test_simple_commands(text, expected):
+    out = ai.simple_command(text)
+    if expected is None:
+        assert out is None or out["action"] != "new_route" or out["settings"]["destination"] != "to Jericho"
+        return
+    action, place, profile = expected
+    assert out["action"] == action
+    assert out["settings"].get("destination") == place
+    assert out["settings"].get("profile") == profile
+
+
+def test_voice_uses_plan_b_when_gemini_is_down(client, monkeypatch):
+    def down(*a, **k):
+        raise RuntimeError("503 UNAVAILABLE")
+    monkeypatch.setattr(ai, "interpret_voice", down)
+    monkeypatch.setattr(ai, "search_place", lambda q: [{"name": q, "lat": 51.7521, "lon": -1.2517}])
+    body = client.post("/voice", json={"text": "take me to univ", "position": [51.75, -1.26]}).json()
+    assert body["action"] == "new_route"
+    assert body["settings"]["end_name"] == "University College"
+    assert body["reply"] == "Going to University College."
+
+
+def test_voice_resolves_nicknames_from_gemini(client, fake_gemini, monkeypatch):
+    fake_gemini.reply = {"action": "new_route", "settings": {"destination": "the Rad Cam"}, "reply": "Off we go."}
+    searched = []
+    monkeypatch.setattr(ai, "search_place", lambda q: searched.append(q) or [{"name": q, "lat": 51.75, "lon": -1.25}])
+    client.post("/voice", json={"text": "rad cam"})
+    assert searched == ["Radcliffe Camera"]
