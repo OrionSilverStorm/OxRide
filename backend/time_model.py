@@ -83,10 +83,15 @@ def get_context(when, weekday_override=None):
     )
 
     # Find the matching forecast hour
-    i = min(
-        range(len(times)),
-        key=lambda j: abs((times[j] - utc_hour).total_seconds())
-    )
+    def row(t):
+        return min(
+            range(len(times)),
+            key=lambda j: abs((times[j] - t).total_seconds())
+        )
+
+    i = row(utc_hour)
+    # Rain values are totals for the hour before their timestamp
+    r = row(utc_hour + timedelta(hours=1))
 
     local = when.astimezone(London)
 
@@ -106,8 +111,8 @@ def get_context(when, weekday_override=None):
     return {
         "wind_ms": hourly["wind_speed_10m"][i] or 0,
         "wind_from_deg": hourly["wind_direction_10m"][i] or 0,
-        "rain_prob": (hourly["precipitation_probability"][i] or 0) / 100,
-        "rain_mm": hourly["precipitation"][i] or 0,
+        "rain_prob": (hourly["precipitation_probability"][r] or 0) / 100,
+        "rain_mm": hourly["precipitation"][r] or 0,
         "dark": hourly["is_day"][i] == 0,
         "rush": rush,
         "temperature_c": (hourly.get("temperature_2m") or [None] * len(times))[i],
