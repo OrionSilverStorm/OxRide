@@ -65,7 +65,21 @@ def test_vercel_paths_have_the_api_prefix():
     ("post", "/voice", {"text": "take me to the station"}),
     ("post", "/speak", {"text": "Turn left"}),
 ])
-def test_other_endpoints_answer(client, method, path, payload):
+def test_placeholder_endpoints_answer(client, method, path, payload):
     # These are still placeholders; this only checks they respond and don't crash.
     r = getattr(client, method)(path, json=payload) if payload else getattr(client, method)(path)
     assert r.status_code == 200
+
+
+def test_best_departure_endpoint(client):
+    start = ",".join(map(str, PLACES["Old Marston"]))
+    end = ",".join(map(str, PLACES["Headington shops"]))
+    r = client.get(f"/best-departure?start={start}&end={end}&profile=regular")
+    assert r.status_code == 200
+    slots = r.json()
+    assert len(slots) == 13 and sum(s["best"] for s in slots) == 1
+    assert all(s["eta_min"] > 0 for s in slots)
+
+
+def test_best_departure_rejects_bad_points(client):
+    assert client.get("/best-departure?start=nowhere&end=51.7,-1.2").status_code == 422

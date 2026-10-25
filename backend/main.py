@@ -88,7 +88,7 @@ async def health() -> dict:
 
 
 @app.post("/route")
-async def route(req: RouteRequest) -> dict:
+def route(req: RouteRequest) -> dict:
     if routing.GRAPH is None:
         raise HTTPException(status_code=503, detail="graph not loaded: run python build_graph.py")
 
@@ -99,9 +99,27 @@ async def route(req: RouteRequest) -> dict:
         raise HTTPException(status_code=404, detail="no route found")
 
 
+def parse_point(text):
+    # "51.75,-1.25" -> (51.75, -1.25)
+    try:
+        lat, lon = (float(x) for x in text.split(","))
+        return lat, lon
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"expected 'lat,lon', got {text!r}")
+
+
 @app.get("/best-departure")
-async def best_departure(start: str, end: str, profile: Profile = "regular") -> list:
-    return []
+def best_departure(start: str, end: str, profile: Profile = "regular") -> list:
+    # One A* run for leaving now, then the same route's ETA for every 15-minute slot.
+    if routing.GRAPH is None:
+        raise HTTPException(status_code=503, detail="graph not loaded")
+    s, e = parse_point(start), parse_point(end)
+    ctx = get_ctx(None)
+    path = routing.find_path(s, e, profile, ctx)
+    if path is None:
+        raise HTTPException(status_code=404, detail="no route found")
+    edges = routing.route_edges(path, routing.PROFILES[profile], ctx)
+    return time_model.best_departures(lambda _ctx: edges, profile=profile, route_id=f"{start}->{end}")
 
 
 @app.get("/search")

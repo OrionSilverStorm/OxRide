@@ -61,6 +61,8 @@ def offline_weather(monkeypatch):
         snapshot = json.load(f)
     monkeypatch.setattr(time_model, "fetch_weather", lambda: snapshot)
     monkeypatch.setattr(time_model, "_weather_cache", None)
+    monkeypatch.setattr(time_model, "_weather_fetched_at", None)
+    monkeypatch.delenv("DATABASE_URL", raising=False)  # never touch a real database
 
 
 @pytest.fixture(scope="session", autouse=True)

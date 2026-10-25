@@ -139,3 +139,9 @@ def test_night_route_prefers_lit_streets():
 def test_unknown_profile_is_an_error():
     with pytest.raises(KeyError):
         routing.find_route(PLACES["Station"], PLACES["Carfax"], "turbo", CALM_DAY)
+
+
+def test_no_cycling_streets_are_not_in_the_graph():
+    # Cornmarket and Queen Street are no-cycling in OSM, so the bike graph never has them.
+    names = {d["name"] for *_, d in routing.GRAPH.edges(data=True)}
+    assert "Cornmarket Street" not in names and "Queen Street" not in names

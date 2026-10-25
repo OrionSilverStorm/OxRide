@@ -143,7 +143,7 @@ def rain_chance_by_hour(month):
         print(f'Historical database unavailable: {exc}')
         return {}
 
-def save_predictions(slots, route_id='default', profile='commuter'):
+def save_predictions(slots, route_id='default', profile='regular'):
     """Save departure predictions."""
     rows = [
         (datetime.fromisoformat(s['depart_utc']), route_id, profile,
