@@ -20,7 +20,7 @@ import { parseWake } from "@/lib/voice";
 
 //define ride types
 type Profile = "chill" | "regular" | "fast";
-const PROFILES: Profile[] = ["chill", "regular", "fast"];
+const PROFILES: Profile[] = ["fast", "regular", "chill"];
 
 // Props for UserMarker: the parent's state value + its setter
 interface UserMarkerProps {

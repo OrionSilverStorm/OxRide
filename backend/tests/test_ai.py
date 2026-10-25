@@ -166,6 +166,26 @@ def test_interpret_voice_sends_audio_and_a_short_context(fake_gemini):
     assert call["config"].response_mime_type == "application/json"
 
 
+def test_thinking_is_kept_short(fake_gemini, monkeypatch):
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.8-flash")
+    ai.interpret_voice(None, "hi", None, None)
+    assert fake_gemini.calls[-1]["config"].thinking_config.thinking_level.value == "MINIMAL"
+    assert ai.thinking_for("gemini-2.5-flash").thinking_budget == 0
+    assert ai.thinking_for("some-other-model") is None
+
+
+def test_falls_back_when_a_model_rejects_the_thinking_setting(fake_gemini, monkeypatch):
+    real = fake_gemini.generate_content
+
+    def picky(self, *, model, contents, config):
+        if config.thinking_config is not None:
+            raise RuntimeError("thinking_level is not supported for this model")
+        return real(self, model=model, contents=contents, config=config)
+    monkeypatch.setattr(fake_gemini, "generate_content", picky)
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.8-flash")
+    assert ai.interpret_voice(None, "hi", None, None)["reply"] == "About ten minutes."
+
+
 def test_interpret_voice_text_fallback(fake_gemini):
     ai.interpret_voice(None, "how long left?", None, None)
     assert fake_gemini.calls[0]["contents"][1] == "The rider said: how long left?"

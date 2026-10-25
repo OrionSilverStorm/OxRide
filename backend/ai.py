@@ -111,6 +111,17 @@ def route_summary(route: dict | None) -> dict | None:
     }
 
 
+def thinking_for(model: str):
+    """Keep Gemini's "thinking" short: a rider waits for the answer (default thinking took ~75 s)."""
+    from google.genai import types
+
+    if "gemini-3" in model or "gemini-4" in model:
+        return types.ThinkingConfig(thinking_level="MINIMAL")
+    if "2.5" in model and "pro" not in model:
+        return types.ThinkingConfig(thinking_budget=0)  # 2.5 flash: thinking off
+    return None
+
+
 def interpret_voice(audio: bytes | None, text: str | None,
                     position: tuple[float, float] | None, route: dict | None,
                     mime: str = "audio/webm") -> dict:
@@ -133,11 +144,18 @@ def interpret_voice(audio: bytes | None, text: str | None,
         parts.append(f"The rider said: {text}")
 
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-    resp = client.models.generate_content(
-        model=model, contents=parts,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM, temperature=0.3,
-            response_mime_type="application/json", response_json_schema=SCHEMA))
+
+    def ask(thinking):
+        return client.models.generate_content(
+            model=model, contents=parts,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM, temperature=0.3, thinking_config=thinking,
+                response_mime_type="application/json", response_json_schema=SCHEMA))
+
+    try:
+        resp = ask(thinking_for(model))
+    except Exception:
+        resp = ask(None)  # this model doesn't take that thinking setting: use its default
     result = json.loads(resp.text)
     if result.get("action") not in ("new_route", "reroute", "answer"):
         result["action"] = "answer"
