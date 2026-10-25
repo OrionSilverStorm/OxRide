@@ -13,7 +13,7 @@ import {
   useMap,
   useMapEvents,
 } from "react-leaflet";
-import type { DebugEdge, DebugRouteId, DebugRouteResult, LatLon } from "@/lib/api";
+import type { DebugEdge, DebugRouteId, DebugRouteResult, LatLon, StreetSpeed, TroubleSpot } from "@/lib/api";
 
 export type ColorBy = "route" | "cost" | "highway";
 
@@ -73,6 +73,8 @@ const waypointIcon = (i: number) => dot("#9333ea", String(i + 1));
 
 interface Props {
   rider?: LatLon | null; // the simulated ride's position
+  speeds?: StreetSpeed[]; // Tiger Data: real riding speed per street
+  trouble?: TroubleSpot[]; // Tiger Data: where riders turned back
   start: LatLon | null;
   end: LatLon | null;
   waypoints: LatLon[];
@@ -127,6 +129,12 @@ function edgeTooltip(e: DebugEdge, i: number) {
       <b>{e.cost}</b>
     </div>
   );
+}
+
+/** Riding speed colour: red = slow (≤ 3 m/s), green = fast (≥ 7 m/s). */
+export function speedColor(ms: number) {
+  const t = Math.max(0, Math.min(1, (ms - 3) / 4));
+  return `hsl(${Math.round(t * 120)} 75% 42%)`;
 }
 
 export default function DebugMap(p: Props) {
@@ -218,6 +226,33 @@ export default function DebugMap(p: Props) {
           interactive={false}
         />
       )}
+
+      {/* Tiger Data: how fast people really ride each street */}
+      {p.speeds?.map((s, i) => (
+        <Polyline
+          key={`speed-${i}`}
+          positions={s.coords}
+          pathOptions={{ color: speedColor(s.speed_ms), weight: 7, opacity: 0.85 }}
+        >
+          <Tooltip sticky>
+            {s.name || "unnamed"}: {(s.speed_ms * 3.6).toFixed(1)} km/h from {s.points} GPS points
+          </Tooltip>
+        </Polyline>
+      ))}
+
+      {/* Tiger Data: where riders went off route */}
+      {p.trouble?.map((t) => (
+        <CircleMarker
+          key={`trouble-${t.osmid}`}
+          center={[t.lat, t.lon]}
+          radius={6 + Math.min(t.riders, 6) * 2}
+          pathOptions={{ color: "#b91c1c", fillColor: t.active ? "#ef4444" : "#fca5a5", fillOpacity: 0.7, weight: 2 }}
+        >
+          <Tooltip>
+            {t.street || "unnamed"}: {t.riders} riders, {t.events} times{t.active ? " (3+ riders: enough to avoid)" : ""}
+          </Tooltip>
+        </CircleMarker>
+      ))}
 
       {p.rider && <Marker position={p.rider} icon={riderIcon} zIndexOffset={1000} />}
       {p.start && (

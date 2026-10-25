@@ -2,6 +2,7 @@
 
 import base64
 import os
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Literal
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 
 import ai
 import debug
+import ridelog
 import routing
 import time_model
 
@@ -61,18 +63,6 @@ class VoiceRequest(BaseModel):
 class SpeakRequest(BaseModel):
     text: str
 
-class NavStep(BaseModel):
-    instruction: str      # "Turn right onto Woodstock Rd"
-    distance_m: float     # Length of this step
-    lat: float            # Where the step starts
-    lon: float
-
-class NavigationData(BaseModel):
-    distance_m: float     # Total trip distance
-    duration_s: float     # Total trip time
-    steps: list[NavStep]
-
-
 def parse_depart_at(depart_at):
     # The request sends text (or nothing). get_context needs a real datetime.
     # Nothing, "", or "null" means leaving now. A time without a timezone is Oxford time.
@@ -109,10 +99,19 @@ def route(req: RouteRequest) -> dict:
         raise HTTPException(status_code=503, detail="graph not loaded: run python build_graph.py")
 
     ctx = get_ctx(req.depart_at)
+    # Real rides (Tiger Data): measured speeds for the ETA, streets riders are turning away from
+    learned, trouble = {}, []
+    if os.environ.get("DATABASE_URL"):
+        hour = datetime.fromisoformat(ctx["local"]).hour if ctx.get("local") else datetime.now(time_model.London).hour
+        learned = ridelog.learned_speeds(hour)
+        trouble = ridelog.trouble_spots()
+        if trouble:
+            ctx = {**ctx, "avoid_osmids": {t["osmid"] for t in trouble}}
     try:
-        result = routing.find_route(req.start, req.end, req.profile, ctx)
+        result = routing.find_route(req.start, req.end, req.profile, ctx, learned=learned)
     except ValueError:
         raise HTTPException(status_code=404, detail="no route found")
+    result["warning"] = trouble_warning(trouble, result["route"])
     # "Leave in 20 min: the rain stops" -- only when leaving now, and only if it's worth saying
     result["hint"] = None
     if not req.depart_at or req.depart_at == "null":
@@ -122,38 +121,80 @@ def route(req: RouteRequest) -> dict:
             print(f"WARNING: departure hint failed ({e!r})")
     return result
 
-@app.post("/navigation")
-def navigation(req: RouteRequest) -> NavigationData:
-    # Turn-by-turn for the same route /route returns (same A*, same time of day).
-    r = route(req)
-    return NavigationData(
-        distance_m=r["stats"]["distance_m"],
-        duration_s=round(r["stats"]["eta_min"] * 60),
-        steps=[NavStep(instruction=s["text"], distance_m=s["distance_m"], lat=s["lat"], lon=s["lon"])
-               for s in r["steps"]],
-    )
+def trouble_warning(trouble, route, near_m=250):
+    # Say why the route bends away from a street, if it's one riders keep turning back on
+    for t in trouble:
+        if any(routing.haversine_m(t["lat"], t["lon"], p[0], p[1]) < near_m for p in route[::3] + route[-1:]):
+            return (f"Avoiding {t['street']}: {t['riders']} riders turned back there in the last "
+                    f"{ridelog.TROUBLE_HOURS} hours (possible closure).")
+    return None
 
-def parse_point(text):
-    # "51.75,-1.25" -> (51.75, -1.25)
+
+# --- Ride logs (Tiger Data). Never break riding: failures answer ok=false. ------------------
+
+class RideStart(BaseModel):
+    start: LatLon
+    end: LatLon
+    profile: Profile = "regular"
+    predicted_min: float | None = None
+    planned_m: float | None = None
+    simulated: bool = False
+
+
+class RidePoint(BaseModel):
+    t: float | str  # ms since 1970 (browser) or ISO time
+    lat: float
+    lon: float
+    acc: float | None = None
+
+
+class RidePoints(BaseModel):
+    points: list[RidePoint]
+    simulated: bool = False
+
+
+class RideEvent(BaseModel):
+    kind: Literal["off_route", "reroute"]
+    lat: float
+    lon: float
+    simulated: bool = False
+
+
+class RideEnd(BaseModel):
+    arrived: bool
+    actual_min: float | None = None  # only used for simulated rides (sped-up ride clock)
+
+
+def _logged(fn):
+    if not os.environ.get("DATABASE_URL"):
+        return {"ok": False, "message": "ride logging is off (no DATABASE_URL)"}
     try:
-        lat, lon = (float(x) for x in text.split(","))
-        return lat, lon
-    except ValueError:
-        raise HTTPException(status_code=422, detail=f"expected 'lat,lon', got {text!r}")
+        return {"ok": True, **(fn() or {})}
+    except Exception as e:
+        print(f"WARNING: ride log failed ({e!r})")
+        return {"ok": False, "message": f"{type(e).__name__}: {str(e)[:200]}"}
 
 
-@app.get("/best-departure")
-def best_departure(start: str, end: str, profile: Profile = "regular") -> list:
-    # One A* run for leaving now, then the same route's ETA for every 15-minute slot.
-    if routing.GRAPH is None:
-        raise HTTPException(status_code=503, detail="graph not loaded")
-    s, e = parse_point(start), parse_point(end)
-    ctx = get_ctx(None)
-    path = routing.find_path(s, e, profile, ctx)
-    if path is None:
-        raise HTTPException(status_code=404, detail="no route found")
-    edges = routing.route_edges(path, routing.PROFILES[profile], ctx)
-    return time_model.best_departures(lambda _ctx: edges, profile=profile, route_id=f"{start}->{end}")
+@app.post("/rides")
+def ride_start(req: RideStart) -> dict:
+    return _logged(lambda: {"ride_id": ridelog.start_ride(
+        req.start, req.end, req.profile, req.predicted_min, req.planned_m, req.simulated)})
+
+
+@app.post("/rides/{ride_id}/points")
+def ride_points(ride_id: uuid.UUID, req: RidePoints) -> dict:
+    return _logged(lambda: {"saved": ridelog.add_points(
+        str(ride_id), [p.model_dump() for p in req.points], req.simulated)})
+
+
+@app.post("/rides/{ride_id}/events")
+def ride_event(ride_id: uuid.UUID, req: RideEvent) -> dict:
+    return _logged(lambda: ridelog.add_event(str(ride_id), req.kind, req.lat, req.lon, req.simulated))
+
+
+@app.post("/rides/{ride_id}/end")
+def ride_end(ride_id: uuid.UUID, req: RideEnd) -> dict:
+    return _logged(lambda: ridelog.end_ride(str(ride_id), req.arrived, req.actual_min))
 
 
 @app.get("/search")

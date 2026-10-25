@@ -2,7 +2,6 @@
 
 from datetime import date, datetime, timedelta, timezone
 
-import pytest
 
 import time_model
 

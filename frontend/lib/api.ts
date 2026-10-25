@@ -22,9 +22,11 @@ export interface RouteResult {
     eta_min: number;
     cycleway_share: number;
     lit_share: number;
+    learned_share?: number; // share of the route whose ETA comes from real rides (Tiger Data)
   };
   steps: Step[];
   hint?: DepartureHint | null; // only when leaving now, and only if worth saying
+  warning?: string | null; // "Avoiding St Aldate's: 4 riders turned back there ..." (possible closure)
 }
 
 /** "Rain should stop by about 13:00. Leave then to stay dry." (backend time_model.departure_hint) */
@@ -61,19 +63,6 @@ export interface VoiceResult {
   error?: string; // only when Gemini failed: why (for the voice log)
 }
 
-/** One 15-minute departure option from /best-departure. */
-export interface Slot {
-  depart_local: string;
-  depart_utc: string;
-  eta_min: number;
-  rain_prob: number;
-  rain_mm?: number;
-  wind_ms: number;
-  dark: boolean;
-  score?: number;
-  best: boolean;
-}
-
 export interface Place {
   name: string;
   lat: number;
@@ -85,8 +74,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) throw new Error(`API error ${res.status}`);
   return res.json();
 }
-
-export const health = () => request<{ status: string }>("/health");
 
 export const getRoute = (body: RouteRequest) =>
   request<RouteResult>("/route", {
@@ -113,12 +100,55 @@ export async function speak(text: string): Promise<Blob> {
   return res.blob();
 }
 
-export const getBestDeparture = (start: LatLon, end: LatLon, profile: Profile) =>
-  request<Slot[]>(
-    `/best-departure?start=${start.join(",")}&end=${end.join(",")}&profile=${profile}`,
-  );
-
 export const searchPlace = (q: string) => request<Place[]>(`/search?q=${encodeURIComponent(q)}`);
+
+// --- Ride logs (Tiger Data). Never throw: logging must not break riding. ---
+
+export interface RidePoint {
+  t: number; // ms since 1970
+  lat: number;
+  lon: number;
+  acc?: number | null;
+}
+
+export interface RideResultTimes {
+  predicted_min: number | null;
+  actual_min: number;
+}
+
+async function quiet<T>(path: string, body: unknown): Promise<T | null> {
+  try {
+    const res = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      keepalive: true, // still sent if the page is closing
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.ok ? (data as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+export const startRide = (body: {
+  start: LatLon;
+  end: LatLon;
+  profile: Profile;
+  predicted_min: number | null;
+  planned_m: number;
+  simulated?: boolean;
+}) => quiet<{ ride_id: string }>("/rides", body);
+
+export const sendRidePoints = (rideId: string, points: RidePoint[], simulated = false) =>
+  quiet<{ saved: number }>(`/rides/${rideId}/points`, { points, simulated });
+
+export const sendRideEvent = (rideId: string, kind: "off_route" | "reroute", at: LatLon, simulated = false) =>
+  quiet(`/rides/${rideId}/events`, { kind, lat: at[0], lon: at[1], simulated });
+
+export const endRide = (rideId: string, arrived: boolean, actualMin?: number) =>
+  quiet<RideResultTimes>(`/rides/${rideId}/end`, { arrived, actual_min: actualMin });
 
 // --- Debug panel (/debug). Mirrors backend/debug.py. ---
 
@@ -233,3 +263,52 @@ export interface ServiceTest {
 
 export const testService = (name: ServiceName) =>
   request<ServiceTest>(`/debug/services/${name}/test`, { method: "POST" });
+
+// --- Tiger Data page on /debug ---
+
+export interface RideStatsLive {
+  rides_real: number;
+  rides_simulated: number;
+  rides_arrived: number;
+  last_ride: string | null;
+  points_real: number;
+  points_simulated: number;
+  events_24h: number;
+  raw_days_kept: number;
+}
+
+export interface StreetSpeed {
+  coords: LatLon[];
+  speed_ms: number;
+  points: number;
+  name: string;
+}
+
+export interface RideAccuracy {
+  ended_at: string;
+  predicted_min: number;
+  actual_min: number;
+  error_pct: number | null;
+  simulated: boolean;
+}
+
+export interface TroubleSpot {
+  osmid: number;
+  street: string;
+  riders: number;
+  events: number;
+  lat: number;
+  lon: number;
+  last: string;
+  active: boolean;
+}
+
+type Stats<T> = { ok: true; data: T } | { ok: false; message: string };
+
+export const getRideStatsLive = () => request<Stats<RideStatsLive>>("/debug/rides/live");
+export const getStreetSpeeds = (hour: number | null, simulated: boolean) =>
+  request<Stats<StreetSpeed[]>>(`/debug/rides/speeds?simulated=${simulated}${hour === null ? "" : `&hour=${hour}`}`);
+export const getRideAccuracy = (simulated: boolean) =>
+  request<Stats<RideAccuracy[]>>(`/debug/rides/accuracy?simulated=${simulated}`);
+export const getTroubleSpots = (simulated: boolean, hours = 24) =>
+  request<Stats<TroubleSpot[]>>(`/debug/rides/trouble?simulated=${simulated}&hours=${hours}`);

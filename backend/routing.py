@@ -212,13 +212,9 @@ def find_path(start, end, profile_name, ctx):
     return astar(GRAPH, start_node, end_node, profile, ctx)
 
 
-def route_edges(path, profile, ctx):
-    # The road data for each step of a path (the cheapest road between each pair of nodes).
-    return [cheapest_edge(GRAPH, a, b, profile, ctx)[0] for a, b in zip(path, path[1:])]
-
-
-def find_route(start, end, profile_name, ctx):
-    # Same fields as the /route output:
+def find_route(start, end, profile_name, ctx, learned=None):
+    # learned: optional {(u, v): (m/s, points)} from real rides (ridelog.learned_speeds),
+    # used for the ETA on the streets that have it. Same fields as the /route output:
     #   route         list of [lat, lon] (drawn on the map)
     #   elevations_m  one per route point
     #   stats         distance, climb, cycleway/lit shares, ETA
@@ -233,12 +229,18 @@ def find_route(start, end, profile_name, ctx):
 
     # add up the facts of every road along the path
     edges = []
+    real_speeds = []  # what real riders do on each road, where known
+    learned_m = 0.0
     distance = 0.0
     cycleway = 0.0
     lit = 0.0
     for a, b in zip(path, path[1:]):
         edge, _ = cheapest_edge(GRAPH, a, b, profile, ctx)
         edges.append(edge)
+        known = (learned or {}).get((a, b))
+        real_speeds.append(known[0] if known else None)
+        if known:
+            learned_m += edge["length"]
         distance += edge["length"]
         if edge["highway"] == "cycleway":
             cycleway += edge["length"]
@@ -252,8 +254,9 @@ def find_route(start, end, profile_name, ctx):
     stats = {
         "distance_m": round(distance),
         "climb_m": round(climb),
-        # speed model: slower uphill and into a headwind, capped at 15 mph
-        "eta_min": round(time_model.eta_minutes(edges, ctx), 1),
+        # real riders' speeds where we have them, otherwise the speed model
+        "eta_min": round(time_model.eta_minutes(edges, ctx, real_speeds), 1),
+        "learned_share": round(learned_m / distance, 2) if distance else 0.0,
         "cycleway_share": round(cycleway / distance, 2) if distance else 0.0,
         "lit_share": round(lit / distance, 2) if distance else 0.0,
     }

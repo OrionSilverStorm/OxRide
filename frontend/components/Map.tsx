@@ -23,6 +23,7 @@ import {
   ArrowUp,
   Bike,
   Clock,
+  Construction,
   CornerUpLeft,
   CornerUpRight,
   Flag,
@@ -45,6 +46,7 @@ import {
   searchPlace,
   sendVoice,
   type Maneuver,
+  type RideResultTimes,
   type RouteResult,
 } from "@/lib/api";
 import {
@@ -59,6 +61,7 @@ import {
 import { say } from "@/lib/speak";
 import { useTheme } from "@/hooks/useTheme";
 import { useVoice } from "@/hooks/useVoice";
+import { useRideLog } from "@/hooks/useRideLog";
 import { vlog } from "@/lib/voiceLog";
 import VoiceLog from "@/components/VoiceLog";
 
@@ -249,6 +252,9 @@ export default function Map() {
   // Routing
   // One /route call gives the line, the stats and the turn-by-turn steps
   const [hint, setHint] = useState<string | null>(null); // "Leave in 20 min: ..." for the ride just planned
+  // Ride log (Tiger Data): measured speeds teach the ETA, off-route events spot closures
+  const rideLog = useRideLog();
+  const [rideDone, setRideDone] = useState<RideResultTimes | null>(null); // predicted vs actual, on arrival
   const sendPositions = async (
     p: Profile = profile,
     t: L.LatLng | null = targetPos,
@@ -263,6 +269,11 @@ export default function Map() {
         // depart_at left out = leaving now
       });
       setNav(data); // Draws the line and opens the directions
+      if (!reroute) {
+        // a new ride (reroutes and ride-type changes continue the same one)
+        rideLog.start(data.stats, [userPos.lat, userPos.lng], [t.lat, t.lng], p);
+        setRideDone(null);
+      }
       if (!reroute) setFollowing(true); // A new ride starts centred on the rider
       setHint(reroute ? null : (data.hint?.text ?? null)); // A "when to leave" tip is pointless after a reroute
     } catch (e) {
@@ -415,7 +426,7 @@ export default function Map() {
       map?.flyTo(t, 15);
       sendPositions(p, t); // Plan the route now
     } else if (r.action === "reroute") {
-      sendPositions(p); // Same destination, new way (e.g. "quieter please")
+      sendPositions(p, targetPos, !!nav); // Same destination, new way (e.g. "quieter please"): same ride
     }
   };
   // The mic: hold to talk (sent when you let go), or tap once to keep listening until tapped again
@@ -436,6 +447,9 @@ export default function Map() {
   const lastReroute = useRef(0);
   useEffect(() => {
     if (!nav || !proj || !fix) return;
+    rideLog.point({ t: fix.time, lat: fix.pos.lat, lon: fix.pos.lng, acc: fix.accuracy });
+    // Arrived: close the ride and show predicted vs actual
+    if (left < 25 && rideLog.active()) rideLog.end(true).then((r) => r && setRideDone(r));
     off.current = updateOffRoute(off.current, proj.distanceToRoute, fix.time, {
       accuracyM: fix.accuracy,
     });
@@ -445,6 +459,7 @@ export default function Map() {
     ) {
       lastReroute.current = Date.now();
       off.current = ON_ROUTE;
+      rideLog.event("off_route", [fix.pos.lat, fix.pos.lng]); // many riders turning back here = trouble spot
       sendPositions(profile, targetPos, true); // From the current position to the same destination
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -831,7 +846,11 @@ export default function Map() {
               <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-4">
                   <button
-                    onClick={() => setNav(null)}
+                    onClick={() => {
+                      rideLog.end(false); // left before arriving (does nothing if already arrived)
+                      setNav(null);
+                      setRideDone(null);
+                    }}
                     aria-label="Exit navigation"
                     className="flex size-12 shrink-0 items-center justify-center rounded-full bg-surface text-foreground"
                   >
@@ -843,11 +862,31 @@ export default function Map() {
                     </p>
                     <p className="text-sm">
                       {fmt(left)} · arrive {eta}
+                      {/* the ETA uses speeds measured on real rides for most of this route */}
+                      {(nav.stats.learned_share ?? 0) >= 0.3 && " · from real rides"}
                     </p>
                   </div>
                   {/* Empty box as wide as the exit button, so the time stays centred */}
                   <div className="size-12 shrink-0" />
                 </div>
+                {/* Arrived: how good the prediction was (logged to Tiger Data) */}
+                {rideDone && (
+                  <div className="rounded-2xl bg-surface p-3 text-base">
+                    <p className="font-bold">You&apos;ve arrived</p>
+                    <p className="text-sm">
+                      {rideDone.predicted_min !== null && `Predicted ${Math.round(rideDone.predicted_min)} min · `}
+                      you took {Math.floor(rideDone.actual_min)} min{" "}
+                      {Math.round((rideDone.actual_min % 1) * 60)} s
+                    </p>
+                  </div>
+                )}
+                {/* A street riders keep turning back on (possible closure): say why the route avoids it */}
+                {nav.warning && (proj?.alongM ?? 0) < 300 && (
+                  <p className="flex items-start gap-2 text-sm">
+                    <Construction className="size-5 shrink-0 text-warning" />
+                    {nav.warning}
+                  </p>
+                )}
                 {/* When to leave: only before you've really set off */}
                 {hint && (proj?.alongM ?? 0) < 100 && (
                   <p className="flex items-start gap-2 text-sm">
@@ -859,7 +898,7 @@ export default function Map() {
                 <div className="flex gap-2 pt-2">
                   {profileButtons((p) => {
                     setProfile(p);
-                    sendPositions(p);
+                    sendPositions(p, targetPos, true); // same ride, new way
                   }, true)}
                 </div>
               </div>

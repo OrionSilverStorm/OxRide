@@ -55,7 +55,7 @@ def test_route_found_and_shaped_right(a, b):
     assert routing.haversine_m(*PLACES[a], *r["route"][0]) < 150
     assert routing.haversine_m(*PLACES[b], *r["route"][-1]) < 150
     s = r["stats"]
-    assert set(s) == {"distance_m", "climb_m", "eta_min", "cycleway_share", "lit_share"}
+    assert set(s) == {"distance_m", "climb_m", "eta_min", "cycleway_share", "lit_share", "learned_share"}
     assert s["distance_m"] > 0 and s["eta_min"] > 0
     assert 0 <= s["cycleway_share"] <= 1 and 0 <= s["lit_share"] <= 1
 

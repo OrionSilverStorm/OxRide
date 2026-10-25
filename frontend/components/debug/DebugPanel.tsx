@@ -8,8 +8,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   debugRoute,
   getDebugProfiles,
+  getRideAccuracy,
+  getRideStatsLive,
   getServices,
+  getStreetSpeeds,
+  getTroubleSpots,
   testService,
+  type RideAccuracy,
+  type RideResultTimes,
+  type RideStatsLive,
+  type StreetSpeed,
+  type TroubleSpot,
   type ServiceName,
   type ServiceTest,
   type DebugCtx,
@@ -26,6 +35,7 @@ import {
 import {
   bearingDeg,
   cumulativeM,
+  distanceM,
   currentStepIndex,
   offsetPoint,
   ON_ROUTE,
@@ -35,6 +45,8 @@ import {
   updateOffRoute,
   type OffRouteState,
 } from "@/lib/nav";
+import { CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
+import { useRideLog } from "@/hooks/useRideLog";
 import DebugMap, { ROUTE_COLORS, costColor, highwayColor, type ColorBy } from "./DebugMap";
 
 type ClickMode = "start" | "end" | "waypoint" | "none";
@@ -381,6 +393,162 @@ function ServicesBox() {
   );
 }
 
+
+// --- Tiger Data: what the ride log has learned ------------------------------------------
+
+type Loaded<T> = T | string | null; // data, an error message, or not loaded yet
+
+const unwrap = <T,>(r: { ok: true; data: T } | { ok: false; message: string }): T | string => (r.ok ? r.data : r.message);
+
+function TigerDataBox({ onSpeeds, onTrouble }: {
+  onSpeeds: (s: StreetSpeed[] | undefined) => void;
+  onTrouble: (t: TroubleSpot[] | undefined) => void;
+}) {
+  const [withSim, setWithSim] = useState(false);
+  const [hour, setHour] = useState<number | null>(null);
+  const [showSpeeds, setShowSpeeds] = useState(false);
+  const [showTrouble, setShowTrouble] = useState(false);
+  const [live, setLive] = useState<Loaded<RideStatsLive>>(null);
+  const [speeds, setSpeeds] = useState<Loaded<StreetSpeed[]>>(null);
+  const [accuracy, setAccuracy] = useState<Loaded<RideAccuracy[]>>(null);
+  const [trouble, setTrouble] = useState<Loaded<TroubleSpot[]>>(null);
+  const [tick, setTick] = useState(0); // bump to refresh
+
+  const fail = (e: Error) => `Backend not reachable (${e.message})`;
+  useEffect(() => {
+    getRideStatsLive().then((r) => setLive(unwrap(r))).catch((e) => setLive(fail(e)));
+    getRideAccuracy(withSim).then((r) => setAccuracy(unwrap(r))).catch((e) => setAccuracy(fail(e)));
+    getTroubleSpots(withSim).then((r) => setTrouble(unwrap(r))).catch((e) => setTrouble(fail(e)));
+  }, [withSim, tick]);
+  useEffect(() => {
+    getStreetSpeeds(hour, withSim).then((r) => setSpeeds(unwrap(r))).catch((e) => setSpeeds(fail(e)));
+  }, [hour, withSim, tick]);
+
+  useEffect(() => {
+    onSpeeds(showSpeeds && Array.isArray(speeds) ? speeds : undefined);
+  }, [showSpeeds, speeds, onSpeeds]);
+  useEffect(() => {
+    onTrouble(showTrouble && Array.isArray(trouble) ? trouble : undefined);
+  }, [showTrouble, trouble, onTrouble]);
+
+  if (typeof live === "string") return <p className="text-xs text-neutral-500">{live}</p>;
+  if (!live) return <p className="text-xs text-neutral-500">Loading…</p>;
+
+  const acc = Array.isArray(accuracy) ? accuracy : [];
+  const errs = acc.map((a) => a.error_pct).filter((e): e is number => e != null);
+  const meanErr = errs.length ? errs.reduce((a, b) => a + Math.abs(b), 0) / errs.length : null;
+  const maxMin = Math.max(10, ...acc.map((a) => Math.max(a.predicted_min, a.actual_min)));
+
+  return (
+    <div className="space-y-3 text-xs">
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-1">
+          <input type="checkbox" checked={withSim} onChange={(e) => setWithSim(e.target.checked)} />
+          include simulated rides
+        </label>
+        <button className="underline" onClick={() => setTick((n) => n + 1)}>refresh</button>
+      </div>
+
+      {/* Counters */}
+      <div className="grid grid-cols-3 gap-2 text-center">
+        {[
+          ["Real rides", live.rides_real],
+          ["Simulated", live.rides_simulated],
+          ["Arrived", live.rides_arrived],
+          ["Real GPS points", live.points_real.toLocaleString()],
+          ["Sim. points", live.points_simulated.toLocaleString()],
+          ["Off-route (24 h)", live.events_24h],
+        ].map(([label, v]) => (
+          <div key={label} className="rounded bg-neutral-100 p-1.5">
+            <div className="text-base font-semibold tabular-nums">{v}</div>
+            <div className="text-neutral-500">{label}</div>
+          </div>
+        ))}
+      </div>
+      <p className="text-neutral-500">
+        Last ride {live.last_ride ? new Date(live.last_ride).toLocaleString() : "never"}. Raw GPS points are kept{" "}
+        {live.raw_days_kept} days; the hourly street speeds stay. Simulated rides never change real routes or ETAs.
+      </p>
+
+      {/* Real speeds per street */}
+      <div className="rounded border border-neutral-200 p-2">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="font-medium">Real speed per street</span>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={showSpeeds} onChange={(e) => setShowSpeeds(e.target.checked)} />
+            show on map
+          </label>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="range" min={-1} max={23} value={hour ?? -1} className="flex-1"
+            onChange={(e) => setHour(Number(e.target.value) < 0 ? null : Number(e.target.value))}
+          />
+          <span className="w-20 text-right tabular-nums">{hour == null ? "all hours" : `${hour}:00–${hour + 1}:00`}</span>
+        </div>
+        <p className="mt-1 text-neutral-500">
+          {typeof speeds === "string" ? speeds : speeds ? `${speeds.length} streets with data` : "Loading…"}
+          {" · "}red = slow, green = fast. Routing uses a street once it has 6+ real points in that hour.
+        </p>
+      </div>
+
+      {/* Predicted vs actual */}
+      <div className="rounded border border-neutral-200 p-2">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="font-medium">Predicted vs actual time</span>
+          <span className="text-neutral-500">
+            {meanErr != null ? `average miss ${meanErr.toFixed(0)}% over ${errs.length} rides` : "no finished rides yet"}
+          </span>
+        </div>
+        {typeof accuracy === "string" && <p className="text-red-700">{accuracy}</p>}
+        {acc.length > 0 && (
+          <div className="h-44">
+            <ResponsiveContainer width="100%" height="100%">
+              <ScatterChart margin={{ top: 4, right: 8, bottom: 14, left: -12 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" />
+                <XAxis type="number" dataKey="predicted_min" name="Predicted" unit=" min" domain={[0, Math.ceil(maxMin)]}
+                  tick={{ fontSize: 10 }} label={{ value: "predicted (min)", position: "insideBottom", offset: -8, fontSize: 10 }} />
+                <YAxis type="number" dataKey="actual_min" name="Actual" unit=" min" domain={[0, Math.ceil(maxMin)]} tick={{ fontSize: 10 }} />
+                <ReferenceLine segment={[{ x: 0, y: 0 }, { x: maxMin, y: maxMin }]} stroke="#a3a3a3" strokeDasharray="4 4" />
+                <ChartTooltip formatter={(v) => `${Number(v).toFixed(1)} min`} />
+                <Scatter data={acc.filter((a) => !a.simulated)} fill="#2563eb" name="Real" />
+                <Scatter data={acc.filter((a) => a.simulated)} fill="#a3a3a3" name="Simulated" />
+              </ScatterChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        <p className="text-neutral-500">On the dashed line = perfect. Above it = slower than we said. Blue = real, grey = simulated.</p>
+      </div>
+
+      {/* Trouble spots */}
+      <div className="rounded border border-neutral-200 p-2">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="font-medium">Trouble spots (last 24 h)</span>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={showTrouble} onChange={(e) => setShowTrouble(e.target.checked)} />
+            show on map
+          </label>
+        </div>
+        {typeof trouble === "string" && <p className="text-red-700">{trouble}</p>}
+        {Array.isArray(trouble) && trouble.length === 0 && <p className="text-neutral-500">Nobody has gone off route.</p>}
+        {Array.isArray(trouble) && trouble.length > 0 && (
+          <ul className="space-y-0.5">
+            {trouble.map((t) => (
+              <li key={t.osmid} className="flex justify-between gap-2">
+                <span className={t.active ? "font-medium text-red-700" : ""}>{t.street || "unnamed street"}</span>
+                <span className="text-neutral-500 tabular-nums">
+                  {t.riders} riders · {t.events}× · {new Date(t.last).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="mt-1 text-neutral-500">3+ real riders going off route on one street within 2 h = routes avoid it and riders get a warning.</p>
+      </div>
+    </div>
+  );
+}
+
 const num = "w-16 rounded border border-neutral-300 px-1 py-0.5 text-right text-xs tabular-nums";
 
 // --- The panel -------------------------------------------------------------------
@@ -412,6 +580,9 @@ export default function DebugPanel() {
   const [rideOn, setRideOn] = useState(false);
   const [speedUp, setSpeedUp] = useState<"1" | "5" | "20">("5");
   const [reroutes, setReroutes] = useState(0);
+  const [speedLayer, setSpeedLayer] = useState<StreetSpeed[] | undefined>();
+  const [troubleLayer, setTroubleLayer] = useState<TroubleSpot[] | undefined>();
+  const [simResult, setSimResult] = useState<RideResultTimes | null>(null);
   const runId = useRef(0);
 
   useEffect(() => {
@@ -470,11 +641,50 @@ export default function DebugPanel() {
 
   // Simulated ride: follows our route; after a wrong turn it re-plans from the dot
   const ours = result?.routes.find((r) => r.id === "ours");
+  // Simulated rides are logged to Tiger Data too (marked simulated, never used for learning).
+  // Ride time is counted from distance at 15 mph, so 5× and 20× still log a normal-speed ride.
+  const simLog = useRideLog(true);
+  const { point: simPoint, end: endSim } = simLog;
+  const simClock = useRef<{ startMs: number; meters: number; last: LatLon | null } | null>(null);
   const ride = useDebugRide(ours?.line ?? null, rideOn, Number(speedUp), (p) => {
+    simLog.event("off_route", p);
     setReroutes((n) => n + 1);
     setWaypoints([]);
     setStart(p); // re-plans from where the rider is
   });
+
+  const startOrPause = () => {
+    if (!rideOn && !simClock.current && ours && start && end) {
+      simLog.start(ours.summary, start, end, profile);
+      simClock.current = { startMs: Date.now(), meters: 0, last: null };
+      setSimResult(null);
+    }
+    setRideOn((v) => !v);
+  };
+
+  const resetRide = () => {
+    setRideOn(false);
+    ride.reset();
+    simLog.end(false);
+    simClock.current = null;
+  };
+
+  // feed the dot's positions to the log, and close the ride at the end of the route
+  const ridePos = ride.position;
+  useEffect(() => {
+    const c = simClock.current;
+    if (!rideOn || !c || !ridePos) return;
+    if (c.last) c.meters += distanceM(c.last, ridePos);
+    c.last = ridePos;
+    simPoint({ t: c.startMs + (c.meters / RIDE_SPEED) * 1000, lat: ridePos[0], lon: ridePos[1], acc: 5 });
+    if (ride.total > 0 && ride.along >= ride.total && !ride.detouring) {
+      simClock.current = null;
+      endSim(true, c.meters / RIDE_SPEED / 60).then((r) => {
+        setRideOn(false);
+        setSimResult(r);
+      });
+    }
+  }, [ridePos, rideOn, ride.along, ride.total, ride.detouring, simPoint, endSim]);
 
   const onMapClick = (p: LatLon) => {
     if (mode === "start") { setStart(p); setMode("end"); }
@@ -612,7 +822,7 @@ export default function DebugPanel() {
           >
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <button
-                onClick={() => setRideOn((v) => !v)}
+                onClick={startOrPause}
                 className="rounded bg-blue-600 px-3 py-1 text-xs text-white"
               >
                 {rideOn ? "Pause" : ride.along > 0 ? "Resume" : "Start ride"}
@@ -626,10 +836,7 @@ export default function DebugPanel() {
                 Wrong turn
               </button>
               <button
-                onClick={() => {
-                  setRideOn(false);
-                  ride.reset();
-                }}
+                onClick={resetRide}
                 className="text-xs underline"
               >
                 reset
@@ -642,8 +849,18 @@ export default function DebugPanel() {
                 {ride.offRoute ? "Off route: finding a new way…" : "Leaving the route… (re-plans after ~4 s more than 30 m away)"}
               </p>
             )}
+            {simResult && (
+              <p className="mt-1 text-xs text-green-700">
+                Logged to Tiger Data (simulated): predicted {simResult.predicted_min ?? "?"} min, took{" "}
+                {simResult.actual_min.toFixed(1)} min.
+              </p>
+            )}
           </Section>
         )}
+
+        <Section title="Tiger Data (ride log)">
+          <TigerDataBox onSpeeds={setSpeedLayer} onTrouble={setTroubleLayer} />
+        </Section>
 
         <Section title="Map layers">
           <div className="flex flex-wrap gap-3 text-xs">
@@ -866,6 +1083,8 @@ export default function DebugPanel() {
         )}
         <DebugMap
           rider={ride.position && (rideOn || ride.along > 0 || ride.detouring) ? ride.position : null}
+          speeds={speedLayer}
+          trouble={troubleLayer}
           start={start}
           end={end}
           waypoints={waypoints}

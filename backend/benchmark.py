@@ -13,7 +13,6 @@ import statistics
 
 import debug
 import routing
-import time_model
 
 PLACES = {
     "Station": (51.7535, -1.2700),

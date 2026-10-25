@@ -50,7 +50,6 @@ def _refresh_weather():
     try:
         _weather_cache = fetch_weather()
         _weather_source = "open-meteo"
-        _save_weather_to_db(_weather_cache)
     except Exception as e:
         print(f"WARNING: weather fetch failed ({e!r})")
         if _weather_cache is not None:
@@ -61,17 +60,6 @@ def _refresh_weather():
                 _weather_cache = json.load(f)
             _weather_source = "snapshot"
     _weather_fetched_at = now
-
-
-def _save_weather_to_db(hourly):
-    # Tiger Data keeps every forecast we fetch. Skipped when no database is set up.
-    if not os.environ.get("DATABASE_URL"):
-        return
-    try:
-        import db
-        db.save_weather(hourly, "forecast")
-    except Exception as e:
-        print(f"Weather not saved to the database: {e!r}")
 
 
 def get_context(when, weekday_override=None):
@@ -170,6 +158,13 @@ def time_penalty(edge, ctx):
     if ctx["rain_mm"] > 0 and surface == "gravel":
         p *= 1.4
 
+    #Streets riders have been turning away from (possible closure, see ridelog.trouble_spots)
+    avoid = ctx.get("avoid_osmids")
+    if avoid:
+        ids = edge.get("osmid")
+        if any(i in avoid for i in (ids if isinstance(ids, list) else [ids])):
+            p *= 5
+
     #Headwind penalty
     hw = headwind(bearing, ctx)
 
@@ -259,84 +254,19 @@ def speed_ms(edge, ctx):
     return BASE_SPEED * speed_factor(edge, ctx)
 
 
-def eta_minutes(edges, ctx):
+def eta_minutes(edges, ctx, learned=None):
+    # learned: optional list, one per edge: the speed real riders do there (m/s) or None.
+    # Measured speeds already include junction waits, so they get no extra allowance.
     total_seconds = 0.0
-    for edge in edges:
-        # time for the road, plus a 2 s allowance for the junction at its end
-        total_seconds += edge["length"] / speed_ms(edge, ctx) + 2
+    for i, edge in enumerate(edges):
+        real = learned[i] if learned else None
+        if real:
+            total_seconds += edge["length"] / max(real, 0.5)
+        else:
+            # time for the road, plus a 2 s allowance for the junction at its end
+            total_seconds += edge["length"] / speed_ms(edge, ctx) + 2
     return total_seconds / 60
 
-
-def best_departures(route_fn, profile="regular", now=None, route_id="default"):
-    if now is None:
-        now = datetime.now(timezone.utc)
-
-    if now.tzinfo is None:
-        raise ValueError("now must be timezone-aware")
-
-    now = now.astimezone(timezone.utc)
-
-    #Rounded to next 15 minutes
-    start = now.replace(second=0, microsecond=0)
-    minutes = (-start.minute) % 15
-
-    if minutes == 0 and (now.second or now.microsecond):
-        minutes = 15
-
-    start += timedelta(minutes=minutes)
-
-    slots = []
-
-    for k in range(13):
-        t = start + timedelta(minutes=15 * k)
-
-        ctx = get_context(t)
-        edges = route_fn(ctx)
-        eta = eta_minutes(edges, ctx)
-
-        rain_prob = ctx["rain_prob"]
-
-        # Rain and darkness penalties
-        score = eta * (1 + 0.5 * rain_prob)
-        score += 5 if ctx["dark"] else 0
-
-        slots.append({
-            "depart_local": t.astimezone(London).isoformat(),
-            "depart_utc": t.isoformat(),
-            "eta_min": round(eta, 1),
-            "rain_prob": rain_prob,
-            "rain_mm": ctx["rain_mm"],
-            "wind_ms": ctx["wind_ms"],
-            "dark": ctx["dark"],
-            "score": score,
-            "best": False
-        })
-
-    best_index = min(
-        range(len(slots)),
-        key=lambda i: slots[i]["score"]
-    )
-
-    slots[best_index]["best"] = True
-
-    for slot in slots:
-        slot["history_rain_prob"] = None
-    if not os.environ.get("DATABASE_URL"):
-        return slots  # no Tiger Data set up: don't try to connect
-    try:
-        import db
-        history_cache = {}
-        for slot in slots:
-            local = datetime.fromisoformat(slot["depart_local"])
-            if local.month not in history_cache:
-                history_cache[local.month] = db.rain_chance_by_hour(local.month)
-            slot["history_rain_prob"] = history_cache[local.month].get(local.hour)
-        db.save_predictions(slots, route_id=route_id, profile=profile)  # once, all 13 slots
-    except Exception as e:
-        print("Database integration skipped:", e)
-    return slots
-
-    
 
 # --- "When to leave" hint ------------------------------------------------------------
 # One short line under the ride's distance and arrival time, shown only when leaving
@@ -456,15 +386,3 @@ def get_weather():
     except OSError:
         pass  # read-only disk (Vercel): the fresh data is still returned
     return data
-
-def mock_route_fn(ctx):
-    return [
-        {
-            "length": 1000,
-            "grade": 0,
-            "bearing": 270,
-            "surface": "asphalt",
-            "lit": "yes"
-        }
-    ]
-

@@ -366,6 +366,41 @@ def gemini_speed(model: str | None = None, text: str = "take me to the station")
     return {"ok": ok, "seconds": round(time.perf_counter() - t0, 1), **report, "answer": answer}
 
 
+# --- Tiger Data page: what the ride logs hold --------------------------------------------
+
+def _stats(fn):
+    if not os.environ.get("DATABASE_URL"):
+        return {"ok": False, "message": "DATABASE_URL is not set on this server."}
+    try:
+        return {"ok": True, "data": fn()}
+    except Exception as e:
+        return {"ok": False, "message": f"{type(e).__name__}: {str(e)[:300]}"}
+
+
+@router.get("/rides/live")
+def rides_live() -> dict:
+    import ridelog
+    return _stats(ridelog.stats_live)
+
+
+@router.get("/rides/speeds")
+def rides_speeds(hour: int | None = None, simulated: bool = False) -> dict:
+    import ridelog
+    return _stats(lambda: ridelog.stats_speeds(hour, simulated))
+
+
+@router.get("/rides/accuracy")
+def rides_accuracy(simulated: bool = False) -> dict:
+    import ridelog
+    return _stats(lambda: ridelog.stats_accuracy(simulated))
+
+
+@router.get("/rides/trouble")
+def rides_trouble(hours: int = 24, simulated: bool = False) -> dict:
+    import ridelog
+    return _stats(lambda: ridelog.stats_trouble(hours, simulated))
+
+
 @router.get("/services")
 def services() -> dict:
     # Which settings the server can see. Only true/false: never the values.
