@@ -186,7 +186,7 @@ export default function Map() {
   //nav settings
   const [nav, setNav] = useState<RouteResult | null>(null); // The ride from /route; non-null = navigation mode
   const route = nav?.route ?? null; // Route as [lat, lon] points, drawn on the map
-  const [voiceOn, setVoiceOn] = useState(false); // Speaker mode, off by default (also acts as mute)
+  const [voiceOn, setVoiceOn] = useState(true); // Spoken directions, on by default (the button mutes them)
   //////////////////////////////////////////////////////////////////////////
 
   // Moves the target and removes the stale route line
@@ -228,6 +228,7 @@ export default function Map() {
       if (!OXFORD_BOUNDS.contains(p)) return; // Safety check
       placeTarget(p); // Drop the red pin
       map?.flyTo(p, 16); // Move the map there
+      sendPositions(profile, p); // A searched place: plan the route straight away
     } catch (err) {
       console.warn("Search failed:", err); // Network or parse error
     }
@@ -258,9 +259,11 @@ export default function Map() {
   // Click a suggestion: drop the pin, fly there, close the list
   const pick = (h: Hit) => {
     const [lon, lat] = h.geometry.coordinates;
-    setTargetPos(L.latLng(lat, lon));
+    const t = L.latLng(lat, lon);
+    placeTarget(t);
     map?.flyTo([lat, lon], 16);
     setResults([]);
+    sendPositions(profile, t); // Picked a place: plan the route straight away
   };
 
   //nav bar data
