@@ -1,3 +1,15 @@
+/*
+ * OxRide styles: the Everforest colour theme, in three steps (top to bottom of this file)
+ *
+ *   1. Palette     every Everforest colour written once, e.g. --ef-dark-card: #343f44
+ *   2. Meaning     what each colour is for (--card, --primary, --foreground, ...), set
+ *                  to the light colours by default and to the dark ones inside .dark
+ *   3. Tailwind    @theme turns those into class names: bg-card, text-primary, ...
+ *
+ * Components only use the class names from step 3, so putting the `dark` class on an
+ * element (hooks/useTheme.ts does it) turns everything inside it dark, with no colour
+ * codes anywhere else in the app.
+ */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -5,6 +17,9 @@
 /* dark: utilities apply inside an element with the .dark class (see lib/theme.ts) */
 @custom-variant dark (&:is(.dark *));
 
+/* Step 3: Tailwind class names. --color-card here is what makes `bg-card`, `text-card`
+   and `border-card` exist. The shadcn names (secondary, muted, accent, popover, sidebar,
+   chart) point at the closest Everforest colour so shadcn components fit in too. */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -55,7 +70,8 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Everforest, medium contrast. The only place hex colours are written. */
+/* Step 1: the palette. Everforest, medium contrast. The only place hex colours are
+   written; everything else refers to these. */
 :root {
   --ef-dark-bg: #2d353b;
   --ef-dark-card: #343f44;
@@ -84,7 +100,14 @@
   --radius: 0.625rem;
 }
 
-/* Light palette (daytime planning screen): the default */
+/* Step 2: what each colour is for.
+   - background  behind the map          - card     search bar, sheet, buttons
+   - surface     buttons inside a card   - border   lines, the sheet handle
+   - foreground  normal text             - muted-foreground  placeholder text, icons
+   - primary     route line, main buttons, selected chip (+ primary-foreground: text on it)
+   - warning / danger / info   leave-time hint / destination pin, errors / your position
+
+   Light palette (daytime planning screen): the default */
 :root,
 .light {
   --background: var(--ef-light-bg);
@@ -104,7 +127,8 @@
   --ring: var(--ef-light-primary);
 }
 
-/* Dark palette (night, and the navigation screen) */
+/* Dark palette (night, and the navigation screen): same names, dark colours. Anything
+   inside an element with class="dark" uses these. */
 .dark {
   --background: var(--ef-dark-bg);
   --foreground: var(--ef-dark-text);
@@ -126,7 +150,9 @@
   * {
     @apply border-border outline-ring/50;
   }
-  /* Card colour behind everything: iPhones show it around the browser bars, next to the sheet */
+  /* Card colour behind everything: iPhones show the page background around Safari's bars
+     (above the map and below the sheet), so it matches the sheet instead of showing
+     light strips */
   body {
     @apply bg-card text-foreground;
   }
@@ -135,7 +161,8 @@
   }
 }
 
-/* Placeholder while the map loads: follow the phone so a dark phone doesn't flash light */
+/* Before the app has loaded and picked a theme: follow the phone's setting so a phone
+   in dark mode doesn't flash light (the map placeholder and the page behind it) */
 @media (prefers-color-scheme: dark) {
   .map-loading {
     background: var(--ef-dark-bg);
@@ -146,7 +173,9 @@
   }
 }
 
-/* A 48px tap area for controls drawn smaller than that */
+/* A 48px tap area for controls drawn smaller than that (map buttons, ride-type chips).
+   An invisible box centred on the button and at least 48x48px catches the taps, so
+   buttons can look small without being hard to hit with a thumb. */
 .tap-48 {
   position: relative;
 }
@@ -160,7 +189,9 @@
   transform: translate(-50%, -50%);
 }
 
-/* --- Leaflet ------------------------------------------------------------------------- */
+/* --- Leaflet (the map library) --------------------------------------------------------
+   Leaflet draws the route line and markers itself, so they are styled here with the
+   same colour variables, which makes them follow the theme too. */
 
 .leaflet-container {
   background: var(--background);
@@ -196,7 +227,9 @@
   stroke: none;
 }
 
-/* Dark map: OpenStreetMap tiles darkened to sit with the Everforest dark palette */
+/* Dark map: OpenStreetMap only has light tiles, so in dark mode we flip them with a
+   filter: invert the colours, turn the hues back (so parks stay green and water blue),
+   then soften brightness, contrast and saturation to sit with the Everforest dark palette */
 .tiles-dark {
   filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.5);
 }

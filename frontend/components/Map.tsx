@@ -59,6 +59,24 @@ import { say } from "@/lib/speak";
 import { useTheme } from "@/hooks/useTheme";
 import { useVoice } from "@/hooks/useVoice";
 
+// ---------------------------------------------------------------------------------------
+// How this screen is built (Everforest colours, Google Maps-style layout)
+//
+// The map fills the whole screen. Everything else floats on top of it in two layers,
+// so the map stays visible (and tappable) in the gaps between the controls:
+//
+//   Top layer     planning:   search bar (with the mic), ride-type chips, theme button
+//                 navigating: green next-turn banner, then the theme and mute buttons
+//   Bottom layer  map credit and "my location" button (plus the big 72px mic while
+//                 navigating), then the bottom sheet: "Where to?", the chosen place
+//                 with Start, or the time left while riding
+//
+// Colours: this file only uses the theme's colour names (bg-card, text-primary,
+// text-foreground, ...), never colour codes. The names are defined in app/globals.css
+// for both palettes, so the same markup works in light and dark. Which palette is
+// showing is decided by hooks/useTheme.ts.
+// ---------------------------------------------------------------------------------------
+
 //define ride types
 type Profile = "chill" | "regular" | "fast";
 const PROFILES: Profile[] = ["fast", "regular", "chill"];
@@ -83,7 +101,11 @@ const TILES = {
   dark: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
 };
 
-// Round floating map button (Google Maps style): drawn at 40px, taps still count over 48px
+// Round floating map button (Google Maps style), shared by theme, mute and "my location".
+// - pointer-events-auto: clickable, although the floating layer it sits in lets taps
+//   through to the map
+// - size-10 + tap-48: drawn at 40px so it covers less map, but taps still count over
+//   48px (see .tap-48 in globals.css)
 const FAB =
   "pointer-events-auto tap-48 flex size-10 items-center justify-center rounded-full bg-card text-foreground shadow-md disabled:opacity-50";
 
@@ -397,7 +419,8 @@ export default function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceOn, i, nav]); // Re-run only when the step changes, not every GPS update
 
-  // Light or dark: follows the phone, always dark while navigating, the toggle overrides both
+  // Light or dark: follows the phone, always dark while navigating, the toggle overrides both.
+  // `theme` is "light" or "dark"; `toggleTheme` is what the sun/moon button calls.
   const { theme, toggle: toggleTheme } = useTheme(!!nav);
 
   // Distance to the next maneuver, for the "then" row of the banner
@@ -406,10 +429,16 @@ export default function Map() {
       ? Math.max(0, stepAlong[i + 1] - (proj?.alongM ?? 0))
       : null;
   const next = nav?.steps[i + 1];
+  // Turn arrows for the banner: the current instruction and the "then" one after it
   const StepIcon = MANEUVER_ICON[step?.maneuver ?? "straight"];
   const NextIcon = MANEUVER_ICON[next?.maneuver ?? "arrive"];
 
-  // Ride type picker: small chips under the search bar, an even row in the sheet while navigating
+  // Ride type picker (Fast / Regular / Chill), used in two places:
+  // - planning (even = false): small chips under the search bar, as wide as their text,
+  //   with a shadow because they float over the map
+  // - navigating (even = true): three equal buttons inside the bottom sheet
+  // The chosen one is filled with the primary colour (green); h-9 + tap-48 keeps them
+  // small on screen but easy to tap.
   const profileButtons = (onPick: (p: Profile) => void, even = false) =>
     PROFILES.map((p) => {
       const Icon = PROFILE_ICON[p];
@@ -429,7 +458,9 @@ export default function Map() {
       );
     });
 
-  // The mic: hold and speak ("chill ride to the Bodleian"), or tap once to keep listening
+  // The mic: hold and speak ("chill ride to the Bodleian"), or tap once to keep listening.
+  // There are two mic buttons (small one in the search bar while planning, big 72px one
+  // while navigating); both get these same handlers so they behave identically.
   const micProps = {
     onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => {
       e.currentTarget.setPointerCapture(e.pointerId); // still "held" if the finger slides off
@@ -441,6 +472,7 @@ export default function Map() {
     "aria-label": "Speak a command",
     "aria-pressed": voice.mode !== "off",
   };
+  // Pulsing ring behind the mic while it is listening
   const micPing = voice.mode !== "off" && (
     <span className="absolute inset-0 animate-ping rounded-full bg-primary opacity-50" />
   );
@@ -463,6 +495,9 @@ export default function Map() {
   );
 
   return (
+    // The `light` / `dark` class switches every colour inside to that palette (the colour
+    // variables in globals.css change under it); colorScheme makes the browser's own bits
+    // (scrollbars, text cursor) match.
     <div
       className={`relative h-full w-full overflow-hidden bg-background text-foreground ${theme}`}
       style={{ colorScheme: theme }}
@@ -478,6 +513,8 @@ export default function Map() {
         zoomControl={false} // Pinch and scroll to zoom, like Google Maps on a phone
         attributionControl={false} // Drawn ourselves above the bottom sheet so it stays visible
       >
+        {/* Map tiles. key={theme} rebuilds the layer when the theme changes; in dark mode
+            the tiles-dark class darkens them with a CSS filter (globals.css) */}
         <TileLayer
           key={theme}
           url={TILES[theme]}
@@ -501,11 +538,15 @@ export default function Map() {
         )}
       </MapContainer>
 
-      {/* ---- Top: search + ride type (planning) or the next-turn banner (navigating) ---- */}
+      {/* ---- Top layer: search + ride type (planning) or the next-turn banner (navigating) ----
+          pointer-events-none lets taps through to the map; each control turns them back
+          on. z-[1000] puts it above Leaflet's map layers. The top padding grows on phones
+          with a notch (safe-area-inset-top). */}
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col gap-2 px-4 pt-[max(8px,env(safe-area-inset-top))]">
         {!nav && (
           <>
             <div className="relative">
+              {/* Search bar: a rounded "pill" like Google Maps: icon, text box, clear, mic */}
               <div className="pointer-events-auto flex h-12 items-center gap-2 rounded-full bg-card pl-4 pr-1 shadow-md">
                 <Search className="size-5 shrink-0 text-muted-foreground" />
                 {/* 16px text: smaller makes iPhones zoom in on the page when you tap the box */}
@@ -526,6 +567,9 @@ export default function Map() {
                     <X className="size-5" />
                   </button>
                 )}
+                {/* Mic inside the search bar (planning only), as in Google Maps. Green icon
+                    when idle, filled green while listening. touch-none/select-none stop
+                    the phone scrolling or selecting text while you hold it */}
                 <button
                   {...micProps}
                   className={`relative flex size-10 shrink-0 touch-none select-none items-center justify-center rounded-full ${
@@ -538,7 +582,7 @@ export default function Map() {
                   <Mic className="relative size-5" />
                 </button>
               </div>
-              {/* Suggestions as you type */}
+              {/* Suggestions as you type: a card that drops down over the map */}
               {query.length >= 2 && results.length > 0 && (
                 <ul className="pointer-events-auto absolute inset-x-0 top-full mt-2 overflow-hidden rounded-2xl bg-card py-2 shadow-md">
                   {results.map((h) => (
@@ -557,7 +601,8 @@ export default function Map() {
                 </ul>
               )}
             </div>
-            {/* Ride type chips (only choose the type: the route starts with "Start"), theme on the right */}
+            {/* Ride type chips (only choose the type: the route starts with "Start"), and the
+                light/dark toggle pushed to the right end of the same row (ml-auto) */}
             <div className="flex items-center gap-2">
               {profileButtons(setProfile)}
               <button
@@ -577,10 +622,13 @@ export default function Map() {
                 )}
               </button>
             </div>
+            {/* "Listening… / Heard: … / reply" bubble, under the search bar near its mic */}
             {voiceBubble}
           </>
         )}
 
+        {/* Next-turn banner (navigating): Google-style green box with a big turn arrow and
+            28px bold text, readable at a glance on a bike, then a "Then ..." row below */}
         {nav && (
           <div className="pointer-events-auto overflow-hidden rounded-2xl shadow-md">
             {/* Current instruction */}
@@ -636,12 +684,17 @@ export default function Map() {
         )}
       </div>
 
-      {/* ---- Bottom: attribution, mic, my location, then the sheet ---- */}
+      {/* ---- Bottom layer: map credit, mic, my location, then the bottom sheet ----
+          Same idea as the top layer: lets taps through except on its controls. The row
+          of buttons sits on top of the sheet, so it moves up when the sheet grows. */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1000] flex flex-col gap-2">
+        {/* Voice bubble while navigating: just above the big mic */}
         {nav && voiceBubble}
         <div
           className={`relative flex items-end justify-between px-4 ${nav ? "min-h-[72px]" : ""}`}
         >
+          {/* Map credit: OpenStreetMap's licence requires it to stay visible, so we draw it
+              here (Leaflet's own one would be hidden behind the sheet) */}
           <p
             className={`pointer-events-auto rounded-md bg-card/90 px-2 py-0.5 text-[10px] leading-tight text-foreground ${
               nav ? "max-w-[calc(50%-52px)]" : "whitespace-nowrap" // wraps beside the big mic while riding
@@ -668,6 +721,7 @@ export default function Map() {
               <Mic className="relative size-8" />
             </button>
           )}
+          {/* "My location" button, bottom right like Google Maps */}
           <button
             onClick={() => userPos && map?.flyTo(userPos, 16)} // Back to the blue dot
             disabled={!userPos}
@@ -678,15 +732,20 @@ export default function Map() {
           </button>
         </div>
 
+        {/* Bottom sheet: rounded top corners, card colour. The bottom padding grows on
+            iPhones so the content stays above the home bar (safe-area-inset-bottom).
+            It shows one of three things: "Where to?", the chosen place, or the ride. */}
         <div className="pointer-events-auto rounded-t-2xl bg-card px-4 pt-2 pb-[max(16px,env(safe-area-inset-bottom))] text-foreground shadow-md">
-          <div className="mx-auto mb-2 h-1 w-8 rounded-full bg-border" />{" "}
-          {/* sheet handle */}
+          {/* Sheet handle: the small grey bar at the top, as in Google Maps */}
+          <div className="mx-auto mb-2 h-1 w-8 rounded-full bg-border" />
+          {/* 1. Nothing chosen yet */}
           {!nav && !targetPos && (
             <p className="pb-2 text-sm">
               <span className="font-bold">Where to?</span> Search, tap the map,
               or hold the mic and say it.
             </p>
           )}
+          {/* 2. A place is chosen: its name, the ride type, Start and clear (X) */}
           {!nav && targetPos && (
             <div className="flex flex-col gap-2">
               <div>
@@ -721,6 +780,7 @@ export default function Map() {
               </div>
             </div>
           )}
+          {/* 3. Navigating: exit (X), time left in the middle, when-to-leave hint, ride type */}
           {nav && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-4">
@@ -739,8 +799,8 @@ export default function Map() {
                     {fmt(left)} · arrive {eta}
                   </p>
                 </div>
-                <div className="size-12 shrink-0" />{" "}
-                {/* balances the exit button so the time stays centred */}
+                {/* Empty box as wide as the exit button, so the time stays centred */}
+                <div className="size-12 shrink-0" />
               </div>
               {/* When to leave: only before you've really set off */}
               {hint && (proj?.alongM ?? 0) < 100 && (

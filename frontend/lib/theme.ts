@@ -1,5 +1,9 @@
-// Which Everforest palette to show. Pure functions so they can be unit tested:
-//   npm run test:unit
+// Which Everforest palette to show. The rules, in order:
+//   1. The toggle (sun/moon button) wins if the rider has used it.
+//   2. Otherwise navigation is always dark (easier to read on a bike).
+//   3. Otherwise follow the phone's light/dark setting.
+// Pure functions (no React, no browser) so they can be unit tested: npm run test:unit
+// (lib/theme.test.ts). hooks/useTheme.ts connects them to the app.
 
 export type Theme = "light" | "dark";
 
@@ -9,7 +13,11 @@ export function autoTheme(systemDark: boolean, navigating: boolean): Theme {
 }
 
 /** A manual choice (the toggle) wins over everything else. */
-export function pickTheme(override: Theme | null, systemDark: boolean, navigating: boolean): Theme {
+export function pickTheme(
+  override: Theme | null,
+  systemDark: boolean,
+  navigating: boolean,
+): Theme {
   return override ?? autoTheme(systemDark, navigating);
 }
 

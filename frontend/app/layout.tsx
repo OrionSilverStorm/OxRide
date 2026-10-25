@@ -20,8 +20,10 @@ export const metadata: Metadata = {
   description: "Time-aware cycle navigation for Oxford",
 };
 
-// Fill the whole screen on iPhones (under the notch and home bar); the browser bars take
-// the card colour of the current palette (hooks/useTheme.ts keeps it in sync with the toggle)
+// - viewportFit "cover": use the whole iPhone screen, under the notch and home bar
+//   (the app adds padding there itself with safe-area-inset, see Map.tsx)
+// - themeColor: the colour phones give the browser bars, the card colour of the
+//   light or dark palette (hooks/useTheme.ts updates it when the toggle is used)
 export const viewport: Viewport = {
   viewportFit: "cover",
   themeColor: [
