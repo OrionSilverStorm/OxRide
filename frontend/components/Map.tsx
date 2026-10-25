@@ -52,6 +52,7 @@ import {
   currentStepIndex,
   ON_ROUTE,
   projectOnRoute,
+  routeAhead,
   stepsAlongM,
   updateOffRoute,
 } from "@/lib/nav";
@@ -116,6 +117,7 @@ interface UserMarkerProps {
   pos: L.LatLng | null; // User's position, null until found
   onFix: (f: Fix) => void; // Every new GPS reading
   follow: boolean; // Keep the map centred on the user (while navigating)
+  onPan: () => void; // The rider dragged the map (so stop following them)
 }
 
 // Props for TargetPin: the parent's state value + its setter
@@ -167,13 +169,17 @@ function TargetPin({ target, setTarget }: TargetPinProps) {
   return target && <Marker position={target} icon={targetIcon} />; // Render the pin once placed, nothing before
 }
 
-function UserMarker({ pos, onFix, follow }: UserMarkerProps) {
+function UserMarker({ pos, onFix, follow, onPan }: UserMarkerProps) {
   const map = useMap(); // Get the Leaflet map instance
   const first = useRef(true); // Fly to the user only on the first reading
   const onFixRef = useRef(onFix); // Latest callback without restarting GPS
+  const onPanRef = useRef(onPan);
   useEffect(() => {
     onFixRef.current = onFix;
+    onPanRef.current = onPan;
   });
+  // dragstart only fires when a finger or mouse drags the map, not for our own panTo
+  useMapEvents({ dragstart: () => onPanRef.current() });
 
   useEffect(() => {
     // Runs every time the browser has a new location (watch: true keeps it coming)
@@ -206,7 +212,7 @@ function UserMarker({ pos, onFix, follow }: UserMarkerProps) {
     };
   }, [map]); // Re-run only if the map instance changes
 
-  // While navigating, keep the user in the middle of the map
+  // While navigating (until the rider drags the map), keep the user in the middle
   useEffect(() => {
     if (follow && pos) map.panTo(pos, { animate: true });
   }, [map, pos, follow]);
@@ -222,10 +228,12 @@ export default function Map() {
   const [profile, setProfile] = useState<Profile>("regular"); //defaults to regular
   //nav settings
   const [nav, setNav] = useState<RouteResult | null>(null); // The ride from /route; non-null = navigation mode
-  const route = nav?.route ?? null; // Route as [lat, lon] points, drawn on the map
   // Voice on (default) or muted. Muted = nothing is spoken (directions or replies), so
   // ElevenLabs is never called; replies still show in the bubble above the mic
   const [voiceOn, setVoiceOn] = useState(true);
+  // While navigating, the map keeps you in the middle. Dragging the map stops that (so you
+  // can look around, as in Google Maps) until you press Re-centre.
+  const [following, setFollowing] = useState(true);
   //////////////////////////////////////////////////////////////////////////
 
   const [targetName, setTargetName] = useState<string | null>(null); // "Radcliffe Camera"; null = tapped on the map
@@ -255,6 +263,7 @@ export default function Map() {
         // depart_at left out = leaving now
       });
       setNav(data); // Draws the line and opens the directions
+      if (!reroute) setFollowing(true); // A new ride starts centred on the rider
       setHint(reroute ? null : (data.hint?.text ?? null)); // A "when to leave" tip is pointless after a reroute
     } catch (e) {
       console.warn(e); // 404 no route, 503 graph not loaded, or backend down
@@ -327,6 +336,12 @@ export default function Map() {
       ? projectOnRoute(nav.route, cum, [userPos.lat, userPos.lng])
       : null; // User snapped onto the route
   const i = proj ? currentStepIndex(stepAlong, proj.alongM) : 0; // The step the user is on now
+  // The line on the map: only what is still ahead, so it shrinks as you ride
+  const along = proj?.alongM ?? 0;
+  const ahead = useMemo(
+    () => (nav ? routeAhead(nav.route, cum, along) : null),
+    [nav, cum, along],
+  );
   const step = nav?.steps[i]; // Current step object (undefined if nav is null); drives the top banner
 
   // Distance and time left, from where the user is now
@@ -545,22 +560,28 @@ export default function Map() {
           maxZoom={19}
           className={theme === "dark" ? "tiles-dark" : ""}
         />
-        <UserMarker pos={userPos} onFix={setFix} follow={!!nav} />
+        <UserMarker
+          pos={userPos}
+          onFix={setFix}
+          follow={!!nav && following}
+          onPan={() => setFollowing(false)}
+        />
         <TargetPin target={targetPos} setTarget={(p) => placeTarget(p)} />
         {/* The planned route: 6px primary line over a thin outline in the background colour.
             className is a direct prop: Leaflet only reads it when the line is first drawn
             (inside pathOptions it is ignored and the line comes out Leaflet's default blue) */}
-        {route && (
+        {/* `ahead` is the part still to ride (the whole route before you set off) */}
+        {ahead && (
           <Polyline
-            positions={route}
+            positions={ahead}
             className="route-outline"
             weight={9}
             opacity={1}
           />
         )}
-        {route && (
+        {ahead && (
           <Polyline
-            positions={route}
+            positions={ahead}
             className="route-line"
             weight={6}
             opacity={1}
@@ -733,15 +754,30 @@ export default function Map() {
             {micPing}
             <Mic className="relative size-6" />
           </button>
-          {/* "My location" button, bottom right like Google Maps */}
-          <button
-            onClick={() => userPos && map?.flyTo(userPos, 16)} // Back to the blue dot
-            disabled={!userPos}
-            aria-label="Back to my location"
-            className={FAB}
-          >
-            <LocateFixed className="size-5 text-info" />
-          </button>
+          {/* Bottom right, like Google Maps: "Re-centre" after you've dragged the map while
+              navigating (follows you again), otherwise the "my location" button */}
+          {nav && !following ? (
+            <button
+              onClick={() => {
+                setFollowing(true);
+                if (userPos && map)
+                  map.flyTo(userPos, Math.max(map.getZoom(), 16));
+              }}
+              className="pointer-events-auto tap-48 flex h-10 items-center gap-2 rounded-full bg-card px-4 text-sm text-foreground shadow-md"
+            >
+              <Navigation className="size-4 text-info" />
+              Re-centre
+            </button>
+          ) : (
+            <button
+              onClick={() => userPos && map?.flyTo(userPos, 16)} // Back to the blue dot
+              disabled={!userPos}
+              aria-label="Back to my location"
+              className={FAB}
+            >
+              <LocateFixed className="size-5 text-info" />
+            </button>
+          )}
         </div>
 
         {/* No sheet: a gap under the row so the mic clears the iPhone home bar */}
