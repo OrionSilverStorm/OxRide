@@ -54,7 +54,8 @@ def _refresh_weather():
     except Exception as e:
         print(f"WARNING: weather fetch failed ({e!r})")
         if _weather_cache is not None:
-            _weather_source = "open-meteo (old)"
+            if _weather_source == "open-meteo":
+                _weather_source = "open-meteo (old)"
         else:
             with open(SNAPSHOT) as f:
                 _weather_cache = json.load(f)
