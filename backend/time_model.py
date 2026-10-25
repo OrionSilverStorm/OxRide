@@ -82,11 +82,11 @@ def get_context(when, weekday_override=None):
         minute=0, second=0, microsecond=0
     )
 
-    # Find the matching forecast hour
+    # Find the matching forecast hour (same hour of day if t is outside the forecast)
     def row(t):
         return min(
             range(len(times)),
-            key=lambda j: abs((times[j] - t).total_seconds())
+            key=lambda j: (times[j].hour != t.hour, abs((times[j] - t).total_seconds()))
         )
 
     i = row(utc_hour)
