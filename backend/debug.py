@@ -431,6 +431,11 @@ def test_service(name: str) -> dict:
             g, err = google_route((51.7535, -1.2700), (51.7534, -1.2540))
             return done(ok=bool(g), message=err or f"Google route: {g['distance_m']} m")
     except Exception as e:  # show what went wrong, cut short (never includes the key)
+        # API errors (ElevenLabs, Gemini) carry a status code and a body that says why
+        status = getattr(e, "status_code", None) or getattr(e, "code", None)
+        body = getattr(e, "body", None)
+        if status or body:
+            return done(ok=False, message=f"{type(e).__name__} {status}: {str(body)[:400]}")
         return done(ok=False, message=f"{type(e).__name__}: {str(e)[:300]}")
 
 
