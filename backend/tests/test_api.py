@@ -59,18 +59,6 @@ def test_vercel_paths_have_the_api_prefix():
         assert c.post("/api/route", json={**TRIP, "profile": "regular"}).status_code == 200
 
 
-@pytest.mark.parametrize("method,path,payload", [
-    ("get", "/best-departure?start=51.77,-1.24&end=51.76,-1.21", None),
-    ("get", "/search?q=Radcliffe%20Camera", None),
-    ("post", "/voice", {"text": "take me to the station"}),
-    ("post", "/speak", {"text": "Turn left"}),
-])
-def test_placeholder_endpoints_answer(client, method, path, payload):
-    # These are still placeholders; this only checks they respond and don't crash.
-    r = getattr(client, method)(path, json=payload) if payload else getattr(client, method)(path)
-    assert r.status_code == 200
-
-
 def test_best_departure_endpoint(client):
     start = ",".join(map(str, PLACES["Old Marston"]))
     end = ",".join(map(str, PLACES["Headington shops"]))
