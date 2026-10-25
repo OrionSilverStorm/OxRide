@@ -129,13 +129,14 @@ def rain_chance_by_hour(month):
     if not 1 <= month <= 12:
         raise ValueError('month must be 1..12')
     try:
+        # rain_mm is the total for the hour before its timestamp
         rows = conn().execute('''
             SELECT
-                EXTRACT(HOUR FROM time AT TIME ZONE 'Europe/London')::int AS hour,
+                EXTRACT(HOUR FROM (time - interval '1 hour') AT TIME ZONE 'Europe/London')::int AS hour,
                 AVG((rain_mm > 0.2)::int) AS chance
             FROM weather
             WHERE source = 'history'
-              AND EXTRACT(MONTH FROM time AT TIME ZONE 'Europe/London') = %s
+              AND EXTRACT(MONTH FROM (time - interval '1 hour') AT TIME ZONE 'Europe/London') = %s
             GROUP BY 1 ORDER BY 1
         ''', (month,)).fetchall()
         return {hour: float(chance) for hour, chance in rows if chance is not None}
