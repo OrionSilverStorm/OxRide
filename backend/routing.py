@@ -53,8 +53,11 @@ PROFILES = {
             "cycleway": 1.0, "path": 1.0, "residential": 1.0, "service": 1.1,
             "tertiary": 1.0, "secondary": 1.0, "primary": 1.0, "trunk": 2.0,
             "footway": 3.0, "pedestrian": 2.0}),
-        "surface_factors": {"asphalt": 1.0, "gravel": 2.0, "cobbles": 1.3},
-        "hill_weight": 8,
+        # fast = quickest: surface and hill costs match the measured slowdowns
+        # (time_model's speed table): gravel 19% slower -> 1/0.81, cobbles 5% -> 1/0.95,
+        # and climbing costs ~4 m of flat riding per metre climbed at every gradient.
+        "surface_factors": {"asphalt": 1.0, "gravel": 1.23, "cobbles": 1.05},
+        "hill_weight": 4,
     },
     "regular": {
         "road_type_factors": _with_links({

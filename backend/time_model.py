@@ -8,7 +8,7 @@ London = ZoneInfo("Europe/London")
 Oxford = (51.7520, -1.2577)
 hourly_vars = "wind_speed_10m,wind_direction_10m,precipitation_probability,precipitation,is_day,temperature_2m"
 CACHE_MINUTES = 30  # fetch a fresh forecast at most this often
-wind_at_rider = 0.5
+wind_at_rider = 1.0  # the speed table uses forecast wind speeds directly
 
 
 def fetch_weather():
@@ -163,93 +163,96 @@ def time_penalty(edge, ctx):
     hw = headwind(bearing, ctx)
 
     if hw > 0:
-        p *= 1 + 0.03 * hw
+        p /= 1 + _band(HEADWIND, hw)  # e.g. 6+ m/s headwind = 1.4% slower = 1.4% more cost
 
     return p
 
-MASS = 85.0       # Rider + bicycle mass (kg)
-G = 9.81          # Gravitational acceleration
-RHO = 1.225       # Air density
-MAX_SPEED = 15 * 0.44704  # 15 mph: what Lime/Voi e-bikes are limited to in the UK
-SPEED_SCALE = 1.0
+# --- Speed model --------------------------------------------------------------------
+# Measured effects on real cycling speed (the team's speed table), applied to a flat
+# asphalt base speed. Each table is (lower bound, effect) from the biggest bound down.
 
-# One rider for every profile: fast/regular/chill only change which roads the route
-# uses, not how fast you ride. 160 W would do ~18 mph on the flat, so the 15 mph cap
-# sets the flat speed; hills and headwind slow you down from there.
-RIDER = {
-    "power": 160,
-    "cda": 0.32,
-    "crr": 0.005
-}
+BASE_SPEED = 15 * 0.44704  # 15 mph on flat asphalt with no wind
 
-def power_needed(v, grade, head, pr):
-    theta = math.atan(grade or 0.0)
+# along-the-road wind in m/s (forecast wind x cos of the angle to the road)
+TAILWIND = [(6, 0.017), (4, 0.012), (3, 0.006), (1, 0.003), (0, 0.0)]  # 2-3 m/s not in the table: uses 1-2's
+HEADWIND = [(6, -0.014), (4, -0.010), (3, -0.005), (2, -0.003), (1, -0.002), (0, 0.0)]
 
-    gravity = MASS * G * math.sin(theta)
+# gradient as a fraction (0.04 = 4%)
+UPHILL = [(0.04, -0.16), (0.03, -0.12), (0.02, -0.08), (0.01, -0.05), (0.005, -0.03), (0, 0.0)]
+DOWNHILL = [(0.02, 0.06), (0.01, 0.05), (0.005, 0.03), (0, 0.0)]
 
-    rolling = MASS * G * pr["crr"] * math.cos(theta)
+# The graph has 3 surface groups; each value is the length-weighted mix of what
+# that group really is in Oxford's OSM data:
+#   cobbles: 68% paving stones (-4%), ~12% setts/cobblestones (-20%), rest asphalt
+#   gravel:  grass, dirt, ground, unpaved (-21%) and 15% compacted (-7%)
+SURFACE = {"asphalt": 0.0, "cobbles": -0.05, "gravel": -0.19}
 
-    air = (
-        0.5 * RHO * pr["cda"]
-        * max(v + head, 0) ** 2
-    )
-
-    return (gravity + rolling + air) * v
-
-def speed_ms(grade, head):
-    pr = RIDER
-
-    low = 0.5
-    high = 25.0
-
-    for _ in range(40):
-        mid = (low + high) / 2
-
-        required = power_needed(
-            mid, grade, head, pr
-        )
-
-        if required > pr["power"]:
-            high = mid
-        else:
-            low = mid
-
-    speed = (low + high) / 2
-
-    return min(speed, MAX_SPEED) * SPEED_SCALE
+SIDE_STREETS = {"residential", "living_street", "service", "unclassified"}
+SHARED_PATHS = {"path", "footway", "pedestrian", "bridleway"}
 
 
+def _band(table, x):
+    for bound, effect in table:
+        if x >= bound:
+            return effect
+    return 0.0
+
+
+def _first(v):
+    return v[0] if isinstance(v, list) and v else v
+
+
+def wind_effect(bearing, ctx):
+    along = headwind(bearing, ctx)  # m/s; positive = into the wind
+    return _band(HEADWIND, along) if along > 0 else _band(TAILWIND, -along)
+
+
+def grade_effect(grade):
+    grade = grade or 0.0
+    return _band(UPHILL, grade) if grade > 0 else _band(DOWNHILL, -grade)
+
+
+def infra_effect(edge):
+    # cycle infrastructure (from the OSM highway and cycleway tags)
+    highway = _first(edge.get("highway"))
+    cycleway = edge.get("cycleway")
+    cycleway = set(cycleway) if isinstance(cycleway, list) else {cycleway}
+    if highway == "cycleway":
+        return -0.01  # separate cycle track
+    if highway in SHARED_PATHS:
+        return 0.01   # shared foot/cycle path
+    if cycleway & {"lane", "opposite_lane"}:
+        return 0.02   # painted cycle lane
+    if cycleway & {"share_busway", "opposite_share_busway"}:
+        return 0.01   # shared bus lane
+    if cycleway & {"track", "opposite_track", "separate"}:
+        return 0.0    # road with a cycle track
+    if highway in SIDE_STREETS:
+        return -0.05  # side street with nothing for bikes
+    return 0.0        # normal road
+
+
+def speed_factor(edge, ctx):
+    # How much faster (>1) or slower (<1) than BASE_SPEED this road is right now.
+    # Rain: no effect on speed in the measurements.
+    f = 1.0
+    f *= 1 + wind_effect(edge.get("bearing"), ctx)
+    f *= 1 + grade_effect(edge.get("grade"))
+    f *= 1 + SURFACE.get(_first(edge.get("surface")), 0.0)
+    f *= 1 + infra_effect(edge)
+    return f
+
+
+def speed_ms(edge, ctx):
+    return BASE_SPEED * speed_factor(edge, ctx)
 
 
 def eta_minutes(edges, ctx):
     total_seconds = 0.0
-
     for edge in edges:
-        length = edge["length"]
-        grade = edge.get("grade") or 0.0
-        bearing = edge.get("bearing")
-
-        # Calculate headwind for this road
-        head = headwind(bearing, ctx)
-
-        # Predict cycling speed
-        speed = speed_ms(grade, head)
-
-        # Rain reduces speed by 10%
-        if ctx["rain_mm"] > 0:
-            speed *= 0.9
-
-        # Avoid division by zero
-        speed = max(speed, 0.5)
-
-        # Time for road segment
-        time_seconds = length / speed
-
-        # Add junction delay
-        total_seconds += time_seconds + 2
-
+        # time for the road, plus a 2 s allowance for the junction at its end
+        total_seconds += edge["length"] / speed_ms(edge, ctx) + 2
     return total_seconds / 60
-
 
 
 def best_departures(route_fn, profile="regular", now=None, route_id="default"):
