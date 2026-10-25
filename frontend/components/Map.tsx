@@ -121,7 +121,7 @@ export default function Map() {
   };
 
   // Routing
-  const sendPositions = async (p: Profile = profile) => {
+  const sendPositions = async (p: Profile = profile, t = targetPos) => {
     if (!userPos || !targetPos) return; // Need both points
     let data;
     try {
@@ -231,6 +231,46 @@ export default function Map() {
   // "650 m" or "1.2 km"
   const fmt = (m: number) =>
     m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`; // 1000+ m: km with one decimal; otherwise whole metres
+
+  //************************************************************************************* */ gemini api voice listen
+  const listen = () => {
+    // Browser speech-to-text (Chrome/Safari). Needs HTTPS or localhost
+    const SR =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    if (!SR) return alert("Speech recognition not supported");
+    const rec = new SR();
+    rec.lang = "en-GB";
+    rec.onresult = async (e: any) => {
+      const text = e.results[0][0].transcript; // What the user said
+
+      // Ask Gemini (via backend) for destination + ride type
+      const plan = await (
+        await fetch("/api/plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        })
+      ).json();
+
+      // Turn the place name into coordinates (Photon, Oxford only)
+      const geo = await (
+        await fetch(
+          `https://photon.komoot.io/api/?q=${encodeURIComponent(plan.destination)}&limit=1&bbox=-1.37,51.69,-1.14,51.82`,
+        )
+      ).json();
+      const f = geo.features[0];
+      if (!f) return console.warn("Place not found:", plan.destination);
+
+      const [lon, lat] = f.geometry.coordinates; // Photon is lon, lat
+      const t = L.latLng(lat, lon);
+      placeTarget(t); // Drop the red pin
+      setProfile(plan.profile); // Highlight chill/regular/fast
+      map?.flyTo(t, 15);
+      sendPositions(plan.profile, t); // Plan the route now
+    };
+    rec.start(); // Starts listening
+  };
 
   return (
     <div className="h-full w-full">
@@ -363,10 +403,10 @@ export default function Map() {
       {!nav && (
         <button
           onClick={() => sendPositions()}
-          className="absolute bottom-4 left-1/2 z-[1000] -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
+          className="absolute bottom-6 left-1/2 z-[1000] -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
           disabled={!userPos || !targetPos}
         >
-          Ride
+          Drop a Pin and Ride
         </button>
       )}
       <button
@@ -377,6 +417,12 @@ export default function Map() {
         }`}
       >
         📍
+      </button>
+      <button
+        onClick={listen} // Press, then speak: "chill ride to the Bodleian"
+        className="absolute bottom-36 left-3 z-[1000] rounded bg-white px-3 py-2 shadow"
+      >
+        🎤
       </button>
     </div>
   );
