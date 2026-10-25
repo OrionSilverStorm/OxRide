@@ -1,7 +1,7 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -13,7 +13,9 @@ import {
 } from "react-leaflet";
 
 import L from "leaflet";
-import { getRoute, getNavigation, type NavigationData } from "@/lib/api";
+import { LocateFixed, Mic, Volume2, VolumeX } from "lucide-react";
+import { getRoute, searchPlace, sendVoice, speak, type RouteResult } from "@/lib/api";
+import { cumulativeM, currentStepIndex, ON_ROUTE, projectOnRoute, stepsAlongM, updateOffRoute } from "@/lib/nav";
 
 //define ride types
 type Profile = "chill" | "regular" | "fast";
@@ -22,7 +24,8 @@ const PROFILES: Profile[] = ["chill", "regular", "fast"];
 // Props for UserMarker: the parent's state value + its setter
 interface UserMarkerProps {
   pos: L.LatLng | null; // User's position, null until found
-  setPos: (p: L.LatLng) => void; // Updates the parent's state
+  onFix: (f: Fix) => void; // Every new GPS reading
+  follow: boolean; // Keep the map centred on the user (while navigating)
 }
 
 // Props for TargetPin: the parent's state value + its setter
@@ -37,17 +40,44 @@ interface Hit {
   properties: { osm_id: number; name?: string; street?: string };
 }
 
-//shape of the backend response [ADJUST FOR ACTUAL DATA]
-//nav instructions per turn
-interface Step {
-  instruction: string;
-  distance_m: number;
+// A GPS reading: where, how precise (m), and when (ms)
+interface Fix {
+  pos: L.LatLng;
+  accuracy: number;
+  time: number;
 }
-//basic trip info
-interface Trip {
-  route: [number, number][];
-  stats: { distance_m: number; duration_s: number };
-  steps: Step[];
+
+const REROUTE_GAP_MS = 8000; // don't ask for a new route more often than this
+
+// Speak with ElevenLabs (via /speak); the browser's own voice if that fails.
+// Returns a function that stops the sound.
+function say(text: string): () => void {
+  let stopped = false;
+  let audio: HTMLAudioElement | undefined;
+  speak(text)
+    .then((mp3) => {
+      if (stopped) return; // Don't play outdated audio
+      audio = new Audio(URL.createObjectURL(mp3));
+      return audio.play();
+    })
+    .catch(() => {
+      if (stopped || !("speechSynthesis" in window)) return;
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "en-GB";
+      window.speechSynthesis.speak(u);
+    });
+  return () => {
+    stopped = true;
+    audio?.pause();
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  };
+}
+
+// The bits of the browser's SpeechRecognition API we use
+interface SpeechRec {
+  lang: string;
+  start: () => void;
+  onresult: (e: { results: { [i: number]: { [j: number]: { transcript: string } } } }) => void;
 }
 
 const OXFORD_CENTER: [number, number] = [51.752, -1.2577];
@@ -77,23 +107,31 @@ function TargetPin({ target, setTarget }: TargetPinProps) {
   return target && <Marker position={target} icon={targetIcon} />; // Render the pin once placed, nothing before
 }
 
-function UserMarker({ pos, setPos }: UserMarkerProps) {
+function UserMarker({ pos, onFix, follow }: UserMarkerProps) {
   const map = useMap(); // Get the Leaflet map instance
+  const first = useRef(true); // Fly to the user only on the first reading
+  const onFixRef = useRef(onFix); // Latest callback without restarting GPS
+  useEffect(() => {
+    onFixRef.current = onFix;
+  });
 
   useEffect(() => {
-    // Runs when the browser returns the user's location
+    // Runs every time the browser has a new location (watch: true keeps it coming)
     const onFound = (e: L.LocationEvent) => {
       if (OXFORD_BOUNDS.contains(e.latlng)) {
         // Only continue if inside Oxford bounds
-        setPos(e.latlng); // Save position so the marker renders
-        map.flyTo(e.latlng, 16); // Animate the map to the user, zoom 16
+        onFixRef.current({ pos: e.latlng, accuracy: e.accuracy, time: e.timestamp }); // Save position so the marker renders
+        if (first.current) {
+          first.current = false;
+          map.flyTo(e.latlng, 16); // Animate the map to the user, zoom 16
+        }
       }
     };
 
-    // Register the listener, then ask the browser for the location
+    // Register the listener, then ask the browser to keep sending the location
     map
       .on("locationfound", onFound)
-      .locate({ enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+      .locate({ watch: true, enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
 
     // Cleanup on unmount: remove listener and stop locating
     return () => {
@@ -101,50 +139,47 @@ function UserMarker({ pos, setPos }: UserMarkerProps) {
     };
   }, [map]); // Re-run only if the map instance changes
 
+  // While navigating, keep the user in the middle of the map
+  useEffect(() => {
+    if (follow && pos) map.panTo(pos, { animate: true });
+  }, [map, pos, follow]);
+
   return pos && <Marker position={pos} icon={userIcon} />; // Render marker once we have a valid position, else nothing
 }
 
 export default function Map() {
   //start and end location
-  let [userPos, setUserPos] = useState<L.LatLng | null>(null); // User's position, null until found
-  let [targetPos, setTargetPos] = useState<L.LatLng | null>(null); // Target position, null until the user clicks
-  let [route, setRoute] = useState<[number, number][] | null>(null); // Route as [lat, lon] points, null until a ride is planned
+  const [fix, setFix] = useState<Fix | null>(null); // Latest GPS reading, null until found
+  const userPos = fix?.pos ?? null; // User's position
+  const [targetPos, setTargetPos] = useState<L.LatLng | null>(null); // Target position, null until the user clicks
   const [profile, setProfile] = useState<Profile>("regular"); //defaults to regular
   //nav settings
-  const [nav, setNav] = useState<NavigationData | null>(null); // Non-null = navigation mode
+  const [nav, setNav] = useState<RouteResult | null>(null); // The ride from /route; non-null = navigation mode
+  const route = nav?.route ?? null; // Route as [lat, lon] points, drawn on the map
   const [voiceOn, setVoiceOn] = useState(false); // Speaker mode, off by default (also acts as mute)
   //////////////////////////////////////////////////////////////////////////
 
   // Moves the target and removes the stale route line
   const placeTarget = (p: L.LatLng) => {
     setTargetPos(p);
-    setRoute(null);
+    setNav(null);
   };
 
   // Routing
-  const sendPositions = async (p: Profile = profile, t = targetPos) => {
-    if (!userPos || !targetPos) return; // Need both points
-    let data;
+  // One /route call gives the line, the stats and the turn-by-turn steps
+  const sendPositions = async (p: Profile = profile, t: L.LatLng | null = targetPos) => {
+    if (!userPos || !t) return; // Need both points
     try {
-      data = await getRoute({
+      const data = await getRoute({
         start: [userPos.lat, userPos.lng], // [lat, lon], latitude first
-        end: [targetPos.lat, targetPos.lng], // [lat, lon], latitude first
+        end: [t.lat, t.lng], // [lat, lon], latitude first
         profile: p, // "fast" | "regular" | "chill"
         // depart_at left out = leaving now
       });
+      setNav(data); // Draws the line and opens the directions
     } catch (e) {
-      return console.warn(e); // 404 no route, 503 graph not loaded, or backend down
+      console.warn(e); // 404 no route, 503 graph not loaded, or backend down
     }
-    console.log(data); // { route, elevations_m, stats, steps }
-    setRoute(data.route); // Draws the line below
-    //set nav bar data
-    setNav(
-      await getNavigation({
-        start: [userPos.lat, userPos.lng],
-        end: [targetPos.lat, targetPos.lng],
-        profile: p,
-      }),
-    );
   };
 
   ///******************************************************************************************** */
@@ -155,13 +190,9 @@ export default function Map() {
   const search = async () => {
     if (!query.trim()) return; // Ignore empty input
     try {
-      const url =
-        `https://nominatim.openstreetmap.org/search?format=json&limit=1&bounded=1` + // bounded=1: only results inside the viewbox
-        `&viewbox=-1.37,51.82,-1.14,51.69` + // Oxford bounds: left,top,right,bottom (lng,lat)
-        `&q=${encodeURIComponent(query)}`; // Escape the text
-      const [hit] = await (await fetch(url)).json(); // First result, or undefined
+      const [hit] = await searchPlace(query); // Backend asks Nominatim (Oxford only); first result or undefined
       if (!hit) return console.warn("No results"); // Nothing found
-      const p = L.latLng(+hit.lat, +hit.lon); // Nominatim returns strings, so convert
+      const p = L.latLng(hit.lat, hit.lon);
       if (!OXFORD_BOUNDS.contains(p)) return; // Safety check
       placeTarget(p); // Drop the red pin
       map?.flyTo(p, 16); // Move the map there
@@ -175,8 +206,8 @@ export default function Map() {
 
   // Fetch suggestions as the user types, cancelling stale requests
   useEffect(() => {
-    // Too short to search: clear the list and stop (no request sent)
-    if (query.length < 2) return setResults([]);
+    // Too short to search: no request (the list is hidden below)
+    if (query.length < 2) return;
     // Lets us cancel this request if the user types again before it finishes
     const ctrl = new AbortController();
     fetch(
@@ -201,33 +232,21 @@ export default function Map() {
   };
 
   //nav bar data
-  // Index of the step closest to the user (0 if no data or no GPS)
-  let i = 0; // Default: first step
-  if (nav && userPos) {
-    // Only search if we have navigation data AND the user's position
-    let best = Infinity; // Smallest distance found so far (starts huge so any real distance beats it)
-    nav.steps.forEach((s, k) => {
-      // Visit every step: s = the step, k = its index
-      const d = userPos.distanceTo([s.lat, s.lon]); // Straight-line metres from user to this step's start point
-      if (d < best) {
-        best = d;
-        i = k;
-      } // Closer than anything before: save the distance and this index
-    }); // End of loop: i now holds the closest step's index
-  } // End of the "have data and GPS" check
+  // Where the user is along the route decides the current step and what's left
+  const cum = useMemo(() => (nav ? cumulativeM(nav.route) : []), [nav]); // Metres from the start to each route point
+  const stepAlong = useMemo(() => (nav ? stepsAlongM(nav.route, cum, nav.steps) : []), [nav, cum]); // Where each step begins
+  const total = cum.at(-1) ?? 0; // Route length in metres
+  const proj = nav && userPos ? projectOnRoute(nav.route, cum, [userPos.lat, userPos.lng]) : null; // User snapped onto the route
+  const i = proj ? currentStepIndex(stepAlong, proj.alongM) : 0; // The step the user is on now
   const step = nav?.steps[i]; // Current step object (undefined if nav is null); drives the top banner
 
-  // Distance left: this step plus all later ones
-  let left = 0; // Running total in metres
-  if (nav)
-    for (let k = i; k < nav.steps.length; k++) left += nav.steps[k].distance_m; // From the current step to the last, add each step's length
-
-  // Time left (assumes constant speed) and ETA clock time
-  const secs = nav ? nav.duration_s * (left / nav.distance_m) : 0; // Total time * share of distance remaining; 0 when not navigating
-  const eta = new Date(Date.now() + secs * 1000).toLocaleTimeString([], {
+  // Distance and time left, from where the user is now
+  const left = Math.max(0, total - (proj?.alongM ?? 0)); // Metres to the destination
+  const secs = nav && total ? nav.stats.eta_min * 60 * (left / total) : 0; // Total time * share of distance remaining; 0 when not navigating
+  const eta = new Date((fix?.time ?? 0) + secs * 1000).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
-  }); // Now + time left (ms), formatted like "01:40"
+  }); // Time of the latest GPS reading + time left, formatted like "01:40"
 
   // "650 m" or "1.2 km"
   const fmt = (m: number) =>
@@ -237,69 +256,61 @@ export default function Map() {
   const listen = () => {
     // Browser speech-to-text (Chrome/Safari). Needs HTTPS or localhost
     const SR =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
+      (window as unknown as { SpeechRecognition?: new () => SpeechRec }).SpeechRecognition ||
+      (window as unknown as { webkitSpeechRecognition?: new () => SpeechRec }).webkitSpeechRecognition;
     if (!SR) return alert("Speech recognition not supported");
     const rec = new SR();
     rec.lang = "en-GB";
-    rec.onresult = async (e: any) => {
+    rec.onresult = async (e) => {
       const text = e.results[0][0].transcript; // What the user said
-
-      // Ask Gemini (via backend) for destination + ride type
-      const plan = await (
-        await fetch("/api/plan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
-        })
-      ).json();
-
-      // Turn the place name into coordinates (Photon, Oxford only)
-      const geo = await (
-        await fetch(
-          `https://photon.komoot.io/api/?q=${encodeURIComponent(plan.destination)}&limit=1&bbox=-1.37,51.69,-1.14,51.82`,
-        )
-      ).json();
-      const f = geo.features[0];
-      if (!f) return console.warn("Place not found:", plan.destination);
-
-      const [lon, lat] = f.geometry.coordinates; // Photon is lon, lat
-      const t = L.latLng(lat, lon);
-      placeTarget(t); // Drop the red pin
-      setProfile(plan.profile); // Highlight chill/regular/fast
-      map?.flyTo(t, 15);
-      sendPositions(plan.profile, t); // Plan the route now
+      let r;
+      try {
+        // Gemini (via /voice) works out the place and ride type, and finds the place's coordinates
+        r = await sendVoice({
+          text,
+          position: userPos ? [userPos.lat, userPos.lng] : undefined,
+          route: nav ?? undefined,
+        });
+      } catch {
+        say("Sorry, I couldn't reach OxRide.");
+        return;
+      }
+      say(r.reply); // Spoken reply (ElevenLabs): the user just asked, so it's not muted
+      const p = (r.settings.profile as Profile | undefined) ?? profile;
+      if (r.settings.profile) setProfile(p); // Highlight chill/regular/fast
+      if (r.action === "new_route" && r.settings.end) {
+        const t = L.latLng(r.settings.end[0], r.settings.end[1]);
+        placeTarget(t); // Drop the red pin
+        map?.flyTo(t, 15);
+        sendPositions(p, t); // Plan the route now
+      } else if (r.action === "reroute") {
+        sendPositions(p); // Same destination, new way (e.g. "quieter please")
+      }
     };
     rec.start(); // Starts listening
   };
+
+  // Off the route by more than ~30 m for a few seconds: plan again from here
+  const off = useRef(ON_ROUTE);
+  const lastReroute = useRef(0);
+  useEffect(() => {
+    if (!nav || !proj || !fix) return;
+    off.current = updateOffRoute(off.current, proj.distanceToRoute, fix.time, { accuracyM: fix.accuracy });
+    if (off.current.offRoute && Date.now() - lastReroute.current > REROUTE_GAP_MS) {
+      lastReroute.current = Date.now();
+      off.current = ON_ROUTE;
+      sendPositions(profile, targetPos); // From the current position to the same destination
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fix]); // Every new GPS reading
 
   //************************************************************************************* */ ElevenLabs AI voice
   // Speaks the current step and distance left whenever the step changes
   useEffect(() => {
     if (!voiceOn || !step) return; // Muted or not navigating: do nothing
-    let stale = false; // Set true if the step changes or the user mutes before audio arrives
-    let audio: HTMLAudioElement | undefined;
-
-    fetch("/api/speak", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: `${step.instruction}. ${fmt(left)} remaining.`,
-      }), // What gets spoken
-    })
-      .then((r) => (r.ok ? r.blob() : Promise.reject())) // mp3 bytes
-      .then((b) => {
-        if (stale) return; // Don't play outdated audio
-        audio = new Audio(URL.createObjectURL(b));
-        audio.play();
-      })
-      .catch(() => {}); // Fail quietly
-
-    // Cleanup: runs on the next step, on mute, and on exit. Cuts the audio off immediately
-    return () => {
-      stale = true;
-      audio?.pause();
-    };
+    // Cleanup (returned): runs on the next step, on mute, and on exit. Cuts the audio off immediately
+    return say(`${step.text}. ${fmt(left)} remaining.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceOn, i, nav]); // Re-run only when the step changes, not every GPS update
 
   return (
@@ -320,7 +331,7 @@ export default function Map() {
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution="&copy; OpenStreetMap contributors"
         />
-        <UserMarker pos={userPos} setPos={setUserPos} />
+        <UserMarker pos={userPos} onFix={setFix} follow={!!nav} />
         <TargetPin target={targetPos} setTarget={placeTarget} />
         {route && (
           <Polyline
@@ -337,38 +348,55 @@ export default function Map() {
         <>
           {/* Top: current direction */}
           <div className="absolute inset-x-3 top-3 z-[1000] rounded-2xl bg-teal-800 p-4 text-white shadow">
-            <p className="text-lg font-semibold">{step?.instruction}</p>
+            <p className="text-lg font-semibold">{step?.text}</p>
             <p className="text-sm opacity-80">
-              then {nav.steps[i + 1]?.instruction ?? "arrive"}
+              then {nav.steps[i + 1]?.text ?? "arrive"}
             </p>
           </div>
 
-          {/* Bottom: duration, distance left, ETA, exit */}
-          <div className="absolute inset-x-3 bottom-3 z-[1000] flex items-center justify-between rounded-2xl bg-neutral-900 p-4 text-white shadow">
-            <div>
-              <p className="text-2xl font-semibold">
-                {Math.max(1, Math.round(secs / 60))} min
-              </p>
-              <p className="text-sm opacity-70">
-                {fmt(left)} · {eta}
-              </p>
+          {/* Bottom: time left, distance left, ETA, ride type, mute, exit */}
+          <div className="absolute inset-x-3 bottom-3 z-[1000] rounded-2xl bg-neutral-900 p-4 text-white shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-2xl font-semibold">
+                  {Math.max(1, Math.round(secs / 60))} min left
+                </p>
+                <p className="text-sm opacity-70">
+                  {fmt(left)} · arrive {eta}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setVoiceOn((v) => !v)} // Click = user gesture, so the browser allows audio
+                  aria-label={voiceOn ? "Mute directions" : "Speak directions"}
+                  className="rounded-full bg-neutral-700 px-4 py-2"
+                >
+                  {voiceOn ? <Volume2 className="size-5" /> : <VolumeX className="size-5" />}
+                </button>
+                <button
+                  onClick={() => setNav(null)}
+                  className="rounded-full bg-red-600 px-5 py-2 font-semibold"
+                >
+                  Exit
+                </button>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setVoiceOn((v) => !v)} // Click = user gesture, so the browser allows audio
-                className="rounded-full bg-neutral-700 px-4 py-2"
-              >
-                {voiceOn ? "🔊" : "🔇"}
-              </button>
-              <button
-                onClick={() => {
-                  setNav(null);
-                  setRoute(null);
-                }}
-                className="rounded-full bg-red-600 px-5 py-2 font-semibold"
-              >
-                Exit
-              </button>
+            {/* Change ride type mid-ride: re-plans from where the user is now */}
+            <div className="mt-3 flex gap-1">
+              {PROFILES.map((p) => (
+                <button
+                  key={p}
+                  onClick={() => {
+                    setProfile(p);
+                    sendPositions(p);
+                  }}
+                  className={`flex-1 rounded-full px-2 py-1 text-sm capitalize ${
+                    profile === p ? "bg-blue-600" : "bg-neutral-700"
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
             </div>
           </div>
         </>
@@ -396,7 +424,7 @@ export default function Map() {
             )}
           </div>
           {/* autocomplete searchbar */}
-          {results.length > 0 && (
+          {query.length >= 2 && results.length > 0 && (
             <ul className="mt-1 rounded bg-white text-sm shadow">
               {results.map((h) => (
                 <li
@@ -450,17 +478,19 @@ export default function Map() {
       <button
         onClick={() => userPos && map?.flyTo(userPos, 16)} // Fly back to the blue dot
         disabled={!userPos}
+        aria-label="Back to my location"
         className={`absolute left-3 z-[1000] rounded bg-white px-3 py-2 shadow disabled:opacity-50 ${
-          nav ? "bottom-28" : "bottom-20" // Higher when the navigation bar is showing
+          nav ? "bottom-44" : "bottom-20" // Higher when the navigation bar is showing
         }`}
       >
-        📍
+        <LocateFixed className="size-5" />
       </button>
       <button
         onClick={listen} // Press, then speak: "chill ride to the Bodleian"
-        className="absolute bottom-36 left-3 z-[1000] rounded bg-white px-3 py-2 shadow"
+        aria-label="Speak a command"
+        className={`absolute left-3 z-[1000] rounded bg-white px-3 py-2 shadow ${nav ? "bottom-56" : "bottom-36"}`}
       >
-        🎤
+        <Mic className="size-5" />
       </button>
     </div>
   );

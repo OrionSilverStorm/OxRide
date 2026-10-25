@@ -5,20 +5,6 @@ export type LatLon = [number, number];
 export type Profile = "fast" | "regular" | "chill";
 export type Maneuver = "left" | "right" | "straight" | "arrive";
 
-export interface NavStep { instruction: string; distance_m: number; lat: number; lon: number }
-export interface NavigationData { distance_m: number; duration_s: number; steps: NavStep[] }
-
-// Same request body as /route
-export async function getNavigation(body: object): Promise<NavigationData> {
-  const res = await fetch("/api/navigation", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
 export interface Step {
   text: string;
   distance_m: number;
@@ -105,12 +91,16 @@ export const sendVoice = (body: VoiceRequest) =>
     body: JSON.stringify(body),
   });
 
-export const speak = (text: string) =>
-  request<{ audio: string | null }>("/speak", {
+/** ElevenLabs speech as mp3. Throws when there's no audio (then use the browser's voice). */
+export async function speak(text: string): Promise<Blob> {
+  const res = await fetch(`${API_URL}/speak`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
   });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.blob();
+}
 
 export const getBestDeparture = (start: LatLon, end: LatLon, profile: Profile) =>
   request<Slot[]>(
