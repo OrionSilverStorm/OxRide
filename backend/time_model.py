@@ -54,7 +54,8 @@ def _refresh_weather():
     except Exception as e:
         print(f"WARNING: weather fetch failed ({e!r})")
         if _weather_cache is not None:
-            _weather_source = "open-meteo (old)"
+            if _weather_source == "open-meteo":
+                _weather_source = "open-meteo (old)"
         else:
             with open(SNAPSHOT) as f:
                 _weather_cache = json.load(f)
@@ -82,11 +83,16 @@ def get_context(when, weekday_override=None):
         minute=0, second=0, microsecond=0
     )
 
-    # Find the matching forecast hour
-    i = min(
-        range(len(times)),
-        key=lambda j: abs((times[j] - utc_hour).total_seconds())
-    )
+    # Find the matching forecast hour (same hour of day if t is outside the forecast)
+    def row(t):
+        return min(
+            range(len(times)),
+            key=lambda j: (times[j].hour != t.hour, abs((times[j] - t).total_seconds()))
+        )
+
+    i = row(utc_hour)
+    # Rain values are totals for the hour before their timestamp
+    r = row(utc_hour + timedelta(hours=1))
 
     local = when.astimezone(London)
 
@@ -106,8 +112,8 @@ def get_context(when, weekday_override=None):
     return {
         "wind_ms": hourly["wind_speed_10m"][i] or 0,
         "wind_from_deg": hourly["wind_direction_10m"][i] or 0,
-        "rain_prob": (hourly["precipitation_probability"][i] or 0) / 100,
-        "rain_mm": hourly["precipitation"][i] or 0,
+        "rain_prob": (hourly["precipitation_probability"][r] or 0) / 100,
+        "rain_mm": hourly["precipitation"][r] or 0,
         "dark": hourly["is_day"][i] == 0,
         "rush": rush,
         "temperature_c": (hourly.get("temperature_2m") or [None] * len(times))[i],
@@ -129,7 +135,7 @@ def headwind(bearing, ctx):
 
 
 def time_penalty(edge, ctx):
-    p = 1.0
+    p = 1.0 
 
     def first(v):
         if isinstance(v, list):
@@ -141,9 +147,14 @@ def time_penalty(edge, ctx):
     bearing = first(edge.get("bearing"))
     lit = first(edge.get("lit"))
 
-    #darkness penalty: lit is True/False in the graph (build_graph fills gaps by road type)
-    if ctx.get("dark") and not lit:
-        p *= 1.6
+    #darkness penalty
+    if ctx["dark"]:
+        if lit is False or lit == "no":
+            p *=1.6
+        elif lit is True or lit == "yes":
+            pass
+        else:
+            p *= 1.2
 
 
     #Rush hour penalty
