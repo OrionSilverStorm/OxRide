@@ -334,6 +334,22 @@ SERVICES = {
 _last_test = {}  # service -> time of its last live test, so the button can't be spammed
 
 
+def working_gemini_models(client, limit=8):
+    # Text "flash" models, stable before preview, each tried with a tiny prompt.
+    skip = ("image", "tts", "audio", "live", "embedding", "thinking")
+    names = [m.name.removeprefix("models/") for m in client.models.list()]
+    flash = [n for n in names if "flash" in n and not any(k in n for k in skip)]
+    flash.sort(key=lambda n: ("preview" in n or "exp" in n, "lite" in n, n))
+    working = []
+    for name in flash[:limit]:
+        try:
+            client.models.generate_content(model=name, contents="Reply with: ok")
+            working.append(name)
+        except Exception:
+            pass
+    return working
+
+
 @router.get("/services")
 def services() -> dict:
     # Which settings the server can see. Only true/false: never the values.
@@ -361,18 +377,19 @@ def test_service(name: str) -> dict:
             from google import genai
             client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
             model = os.environ.get("GEMINI_MODEL")
-            if not model:
-                flash = sorted(m.name.removeprefix("models/") for m in client.models.list() if "flash" in m.name)
-                return done(ok=False, models=flash,
-                            message="The key works. Now set GEMINI_MODEL to one of these models.")
-            try:
-                resp = client.models.generate_content(model=model, contents="Reply with exactly: OxRide ready")
-            except Exception as e:
-                # most likely a wrong GEMINI_MODEL: show the names that would work
-                flash = sorted(m.name.removeprefix("models/") for m in client.models.list() if "flash" in m.name)
-                return done(ok=False, models=flash,
-                            message=f"GEMINI_MODEL={model!r} failed ({str(e)[:120]}). Use one of these names.")
-            return done(ok=True, message=f"{model} replied: {resp.text.strip()[:100]}")
+            problem = "GEMINI_MODEL is not set."
+            if model:
+                try:
+                    resp = client.models.generate_content(model=model, contents="Reply with exactly: OxRide ready")
+                    return done(ok=True, message=f"{model} replied: {resp.text.strip()[:100]}")
+                except Exception as e:
+                    problem = f"GEMINI_MODEL={model!r} failed ({str(e)[:120]})."
+            # Find models this key can really use: listed isn't the same as available
+            working = working_gemini_models(client)
+            if not working:
+                return done(ok=False, models=[], message=f"{problem} No flash model answered with this key.")
+            return done(ok=False, models=working,
+                        message=f"{problem} These models work with this key: set GEMINI_MODEL to the first one.")
 
         if name == "elevenlabs":
             import base64

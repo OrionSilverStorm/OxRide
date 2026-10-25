@@ -62,15 +62,19 @@ def test_wrong_gemini_model_lists_the_right_names(client, monkeypatch):
             self.models = types.SimpleNamespace(
                 generate_content=self.fail,
                 list=lambda: [types.SimpleNamespace(name="models/gemini-x-flash"),
+                              types.SimpleNamespace(name="models/gemini-old-flash"),
+                              types.SimpleNamespace(name="models/gemini-x-flash-image"),
                               types.SimpleNamespace(name="models/gemini-x-pro")])
 
-        def fail(self, **kw):
-            raise RuntimeError("404 models/flash is not found")
+        def fail(self, *, model, contents):
+            if model != "gemini-x-flash":
+                raise RuntimeError(f"404 models/{model} is not found")
+            return types.SimpleNamespace(text="ok")
 
     monkeypatch.setattr(genai, "Client", FakeClient)
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setenv("GEMINI_MODEL", "models/flash")
     body = client.post("/debug/services/gemini/test").json()
     assert body["ok"] is False
-    assert body["models"] == ["gemini-x-flash"]
+    assert body["models"] == ["gemini-x-flash"]  # only the one that really answered
     assert "models/flash" in body["message"]
