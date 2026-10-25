@@ -216,6 +216,7 @@ def test_voice_survives_gemini_failing(client, monkeypatch):
     monkeypatch.setattr(ai, "interpret_voice", broken)
     r = client.post("/voice", json={"text": "hello"})
     assert r.status_code == 200 and r.json()["action"] == "answer"
+    assert r.json()["error"] == "RuntimeError: quota"  # says why, for debugging
 
 
 def test_voice_needs_audio_or_text(client):

@@ -178,7 +178,9 @@ def voice(req: VoiceRequest) -> dict:
         result = ai.interpret_voice(audio, req.text, req.position, req.route, req.mime)
     except Exception as e:
         print(f"WARNING: Gemini failed ({e!r})")
-        return {"action": "answer", "settings": {}, "reply": "Sorry, I couldn't understand that. Try again?"}
+        # "error" is for debugging (curl / Vercel logs); the app only uses action, settings, reply
+        return {"action": "answer", "settings": {}, "reply": "Sorry, I couldn't understand that. Try again?",
+                "error": f"{type(e).__name__}: {str(e)[:300]}"}
 
     settings = dict(result.get("settings") or {})
     place = settings.pop("destination", None)
