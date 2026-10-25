@@ -24,6 +24,15 @@ export interface RouteResult {
     lit_share: number;
   };
   steps: Step[];
+  hint?: DepartureHint | null; // only when leaving now, and only if worth saying
+}
+
+/** "Rain should stop by about 13:00. Leave then to stay dry." (backend time_model.departure_hint) */
+export interface DepartureHint {
+  kind: "rain_starts" | "rain_stops" | "dark_soon" | "light_soon" | "ice" | "rush_ends";
+  text: string;
+  in_min: number; // 0 = leave now
+  leave_at: string; // Oxford time, ISO
 }
 
 export interface RouteRequest {

@@ -103,7 +103,9 @@ ctx           {hour, is_dark, wind_speed, wind_dir, rain, temperature_c}      # 
 RouteResult   {route:[[lat,lon],...],          # drawn on the map
                elevations_m:[...],             # one per route point, for ElevationChart + suffer score
                stats:{distance_m, climb_m, eta_min, cycleway_share, lit_share},
-               steps:[Step]}
+               steps:[Step],
+               hint: Hint | null}              # only when leaving now (see "Best time to leave")
+Hint          {kind, text, in_min, leave_at}   # kind: rain_starts|rain_stops|dark_soon|light_soon|ice|rush_ends
 Step          {text, distance_m, lat, lon, maneuver:"left"|"right"|"straight"|"arrive"}
 Slot          {depart_at, eta_min, rain, wind_speed}                           # one per 15-minute departure option
 VoiceResult   {action:"new_route"|"reroute"|"answer", settings:{...RouteRequest fields...}, reply}
@@ -154,6 +156,8 @@ VoiceResult   {action:"new_route"|"reroute"|"answer", settings:{...RouteRequest 
 8. Back in the browser: `Map.tsx` draws `route`; `RoutePanel.tsx` shows `stats`; `ElevationChart.tsx` plots `elevations_m`; `SufferScore.tsx` is computed from `elevations_m`/`climb_m`.
 
 ### 3. Best time to leave
+
+Built as: `time_model.departure_hint(now, eta_min)`, returned as `hint` by `POST /route` when leaving now, and shown under the distance and arrival time until the rider has gone 100 m. Agreed rules: at most one hint, only for leaving within 60 min, rain counts as likely from 50%. Cases in priority order: rain about to start (leave now), rain about to stop, sunset soon / sunrise soon, icy roads (<= 2 °C), rush hour ending. "Faster later" and "less wind later" were dropped: wind changes speed by under 2%.
 
 What it is: a small hint, not the main feature. The route is always planned for the departure time in the request (`depart_at`, which is *now* unless the rider picked another time). The hint is one extra line under the route, such as "Leave in 20 min: the rain stops and the ride is 3 min faster". If no later slot is clearly better, show no hint. The departure chart and the database are extras (cut them first), but keep the one-line hint: it is the TIME theme and HRT's "recommend a time to leave".
 

@@ -338,6 +338,105 @@ def best_departures(route_fn, profile="regular", now=None, route_id="default"):
 
     
 
+# --- "When to leave" hint ------------------------------------------------------------
+# One short line under the ride's distance and arrival time, shown only when leaving
+# now (or a little later) is clearly better, and only for leaving within the next hour.
+# Priority when several apply: rain starts > rain stops > darkness > ice > rush hour.
+
+HINT_WINDOW_MIN = 60   # nobody waits longer than this
+WET_PROB = 0.5         # rain counts as likely from a 50% chance...
+WET_MM = 0.2           # ...or this much rain in the hour
+DRY_PROB = 0.2
+DRY_MM = 0.1
+ICY_C = 2.0            # at or below this, roads may be icy
+RUSH_ENDS = ((9, 30), (18, 30))  # local times when the morning and evening rush end (see get_context)
+
+
+def sun_times(day, lat=Oxford[0], lon=Oxford[1]):
+    """Sunrise and sunset (UTC) on a date. NOAA's formula: within a few minutes, no network."""
+    g = 2 * math.pi / 365 * (day.timetuple().tm_yday - 1)
+    eqtime = 229.18 * (0.000075 + 0.001868 * math.cos(g) - 0.032077 * math.sin(g)
+                       - 0.014615 * math.cos(2 * g) - 0.040849 * math.sin(2 * g))
+    decl = (0.006918 - 0.399912 * math.cos(g) + 0.070257 * math.sin(g) - 0.006758 * math.cos(2 * g)
+            + 0.000907 * math.sin(2 * g) - 0.002697 * math.cos(3 * g) + 0.00148 * math.sin(3 * g))
+    phi = math.radians(lat)
+    cos_ha = math.cos(math.radians(90.833)) / (math.cos(phi) * math.cos(decl)) - math.tan(phi) * math.tan(decl)
+    ha = math.degrees(math.acos(max(-1.0, min(1.0, cos_ha))))
+    midnight = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    sunrise = midnight + timedelta(minutes=720 - 4 * (lon + ha) - eqtime)
+    sunset = midnight + timedelta(minutes=720 - 4 * (lon - ha) - eqtime)
+    return sunrise, sunset
+
+
+def _wet(ctx):
+    return ctx["rain_prob"] >= WET_PROB or ctx["rain_mm"] >= WET_MM
+
+
+def _dry(ctx):
+    return ctx["rain_prob"] < DRY_PROB and ctx["rain_mm"] < DRY_MM
+
+
+def _clock(t):
+    return t.astimezone(London).strftime("%H:%M")
+
+
+def _hour_start(t, now):
+    # The forecast is hourly, so a change in the weather starts on the hour
+    return max(now, t.replace(minute=0, second=0, microsecond=0))
+
+
+def departure_hint(now, eta_min):
+    """The one 'when to leave' line worth showing for a ride of eta_min minutes, or None."""
+    now = now.astimezone(timezone.utc)
+    ride = timedelta(minutes=eta_min)
+    limit = now + timedelta(minutes=HINT_WINDOW_MIN)
+    times = [now + timedelta(minutes=m) for m in range(0, HINT_WINDOW_MIN + 1, 15)]
+    ctxs = [get_context(t) for t in times]
+    here = ctxs[0]
+
+    def hint(kind, text, leave):
+        return {"kind": kind, "text": text, "in_min": round((leave - now).total_seconds() / 60),
+                "leave_at": leave.astimezone(London).isoformat(timespec="minutes")}
+
+    # 1. Rain about to start: dry now and when you'd arrive, wet soon after -> go now
+    if _dry(here) and _dry(get_context(now + ride)):
+        for t, c in zip(times[1:], ctxs[1:]):
+            if _wet(c):
+                return hint("rain_starts", f"Rain from about {_clock(_hour_start(t, now))}. Leave now to arrive dry.", now)
+
+    # 2. Rain about to stop: wet now, dry for the whole ride if you wait a bit
+    if _wet(here):
+        for t, c in zip(times[1:], ctxs[1:]):
+            leave = _hour_start(t, now)
+            if _dry(c) and _dry(get_context(leave + ride)):
+                return hint("rain_stops", f"Rain should stop by about {_clock(leave)}. Leave then to stay dry.", leave)
+
+    # 3. Darkness: arrive before sunset, or wait for sunrise
+    sunrise, sunset = sun_times(now.astimezone(London).date())
+    spare = sunset - ride - now  # how long you can wait and still arrive in daylight
+    if timedelta(minutes=1) <= spare <= timedelta(minutes=HINT_WINDOW_MIN) and now < sunset:
+        return hint("dark_soon", f"Sunset at {_clock(sunset)}. Leave within {int(spare.total_seconds() // 60)} min "
+                                 "to arrive before dark.", now)
+    if now < sunrise <= limit:
+        return hint("light_soon", f"It gets light at {_clock(sunrise)}. Leave then for a daylight ride.", sunrise)
+
+    # 4. Ice: freezing now, above freezing within the hour
+    if here.get("temperature_c") is not None and here["temperature_c"] <= ICY_C:
+        for t, c in zip(times[1:], ctxs[1:]):
+            if c.get("temperature_c") is not None and c["temperature_c"] > ICY_C:
+                leave = _hour_start(t, now)
+                return hint("ice", f"Roads may be icy until about {_clock(leave)}. Leaving then is safer.", leave)
+
+    # 5. Rush hour about to end
+    if here["rush"]:
+        local = now.astimezone(London)
+        for h, m in RUSH_ENDS:
+            end = local.replace(hour=h, minute=m, second=0, microsecond=0)
+            if local < end <= limit:
+                return hint("rush_ends", f"Rush hour ends at {_clock(end)}: quieter roads if you leave then.", end)
+    return None
+
+
 SNAPSHOT = os.path.join(
     os.path.dirname(__file__),
     "weather_snapshot.json"

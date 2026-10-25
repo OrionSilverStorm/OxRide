@@ -110,9 +110,17 @@ def route(req: RouteRequest) -> dict:
 
     ctx = get_ctx(req.depart_at)
     try:
-        return routing.find_route(req.start, req.end, req.profile, ctx)
+        result = routing.find_route(req.start, req.end, req.profile, ctx)
     except ValueError:
         raise HTTPException(status_code=404, detail="no route found")
+    # "Leave in 20 min: the rain stops" -- only when leaving now, and only if it's worth saying
+    result["hint"] = None
+    if not req.depart_at or req.depart_at == "null":
+        try:
+            result["hint"] = time_model.departure_hint(datetime.now(timezone.utc), result["stats"]["eta_min"])
+        except Exception as e:
+            print(f"WARNING: departure hint failed ({e!r})")
+    return result
 
 @app.post("/navigation")
 def navigation(req: RouteRequest) -> NavigationData:

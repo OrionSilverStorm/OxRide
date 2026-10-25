@@ -197,7 +197,8 @@ export default function Map() {
 
   // Routing
   // One /route call gives the line, the stats and the turn-by-turn steps
-  const sendPositions = async (p: Profile = profile, t: L.LatLng | null = targetPos) => {
+  const [hint, setHint] = useState<string | null>(null); // "Leave in 20 min: ..." for the ride just planned
+  const sendPositions = async (p: Profile = profile, t: L.LatLng | null = targetPos, reroute = false) => {
     if (!userPos || !t) return; // Need both points
     try {
       const data = await getRoute({
@@ -207,6 +208,7 @@ export default function Map() {
         // depart_at left out = leaving now
       });
       setNav(data); // Draws the line and opens the directions
+      setHint(reroute ? null : (data.hint?.text ?? null)); // A "when to leave" tip is pointless after a reroute
     } catch (e) {
       console.warn(e); // 404 no route, 503 graph not loaded, or backend down
     }
@@ -381,7 +383,7 @@ export default function Map() {
     if (off.current.offRoute && Date.now() - lastReroute.current > REROUTE_GAP_MS) {
       lastReroute.current = Date.now();
       off.current = ON_ROUTE;
-      sendPositions(profile, targetPos); // From the current position to the same destination
+      sendPositions(profile, targetPos, true); // From the current position to the same destination
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fix]); // Every new GPS reading
@@ -446,6 +448,8 @@ export default function Map() {
                 <p className="text-sm opacity-70">
                   {fmt(left)} · arrive {eta}
                 </p>
+                {/* When to leave: only before you've really set off */}
+                {hint && (proj?.alongM ?? 0) < 100 && <p className="mt-1 text-sm text-amber-300">{hint}</p>}
               </div>
               <div className="flex gap-2">
                 <button

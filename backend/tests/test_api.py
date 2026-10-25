@@ -25,7 +25,7 @@ def test_route_contract(client, profile):
     r = client.post("/route", json={**TRIP, "profile": profile})
     assert r.status_code == 200
     body = r.json()
-    assert set(body) == {"route", "elevations_m", "stats", "steps"}
+    assert set(body) == {"route", "elevations_m", "stats", "steps", "hint"}
     assert len(body["route"]) == len(body["elevations_m"])
     assert body["steps"][-1]["maneuver"] == "arrive"
 
