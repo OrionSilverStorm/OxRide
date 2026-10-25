@@ -115,12 +115,15 @@ def route(req: RouteRequest) -> dict:
         raise HTTPException(status_code=404, detail="no route found")
 
 @app.post("/navigation")
-async def navigation(req: RouteRequest) -> NavigationData:
-    #DUMMY DATA ------ REPLACE PLEASE
-    return NavigationData(distance_m=650, duration_s=540, steps=[
-        NavStep(instruction="Head north on Woodstock Rd", distance_m=400, lat=req.start[0], lon=req.start[1]),
-        NavStep(instruction="Turn right onto Parks Rd", distance_m=250, lat=req.end[0], lon=req.end[1]),
-    ])
+def navigation(req: RouteRequest) -> NavigationData:
+    # Turn-by-turn for the same route /route returns (same A*, same time of day).
+    r = route(req)
+    return NavigationData(
+        distance_m=r["stats"]["distance_m"],
+        duration_s=round(r["stats"]["eta_min"] * 60),
+        steps=[NavStep(instruction=s["text"], distance_m=s["distance_m"], lat=s["lat"], lon=s["lon"])
+               for s in r["steps"]],
+    )
 
 def parse_point(text):
     # "51.75,-1.25" -> (51.75, -1.25)
