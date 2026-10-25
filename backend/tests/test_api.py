@@ -71,3 +71,20 @@ def test_best_departure_endpoint(client):
 
 def test_best_departure_rejects_bad_points(client):
     assert client.get("/best-departure?start=nowhere&end=51.7,-1.2").status_code == 422
+
+
+def test_navigation_gives_real_steps_for_the_same_route(client):
+    # Shape used by the frontend's getNavigation (lib/api.ts: NavigationData / NavStep).
+    req = {**TRIP, "profile": "regular", "depart_at": NOON.isoformat()}
+    nav = client.post("/navigation", json=req).json()
+    route = client.post("/route", json=req).json()
+    assert set(nav) == {"distance_m", "duration_s", "steps"}
+    assert nav["distance_m"] == route["stats"]["distance_m"]
+    assert nav["duration_s"] == pytest.approx(route["stats"]["eta_min"] * 60, abs=1)
+    assert [s["instruction"] for s in nav["steps"]] == [s["text"] for s in route["steps"]]
+    assert all(set(s) == {"instruction", "distance_m", "lat", "lon"} for s in nav["steps"])
+    assert nav["steps"][-1]["instruction"] == "You have arrived"
+
+
+def test_navigation_rejects_bad_input(client):
+    assert client.post("/navigation", json={**TRIP, "profile": "turbo"}).status_code == 422
