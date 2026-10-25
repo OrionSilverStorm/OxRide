@@ -102,16 +102,23 @@ def test_speak_returns_mp3_and_caches(fake_elevenlabs):
     assert fake_elevenlabs.calls == [("voice-123", "Turn left onto Broad Street", "eleven_flash_v2_5")]
 
 
-def test_speak_endpoint_returns_base64(client, fake_elevenlabs):
-    body = client.post("/speak", json={"text": "Hello"}).json()
-    assert base64.b64decode(body["audio"]) == b"ID3mp3-bytes"
+def test_speak_endpoint_returns_playable_mp3(client, fake_elevenlabs):
+    r = client.post("/speak", json={"text": "Hello"})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/mpeg"
+    assert r.content == b"ID3mp3-bytes"
 
 
-def test_speak_endpoint_falls_back_when_elevenlabs_fails(client, monkeypatch):
+def test_speak_endpoint_says_503_when_elevenlabs_fails(client, monkeypatch):
+    # the frontend then uses the browser's own voice
     def broken(text):
         raise RuntimeError("quota exceeded")
     monkeypatch.setattr(ai, "speak", broken)
-    assert client.post("/speak", json={"text": "Hello"}).json() == {"audio": None}
+    assert client.post("/speak", json={"text": "Hello"}).status_code == 503
+
+
+def test_speak_endpoint_needs_text(client):
+    assert client.post("/speak", json={"text": "  "}).status_code == 422
 
 
 # --- interpret_voice ------------------------------------------------------------------------

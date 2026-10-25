@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -192,13 +192,14 @@ def voice(req: VoiceRequest) -> dict:
 
 
 @app.post("/speak")
-def speak(req: SpeakRequest) -> dict:
-    # ElevenLabs audio as base64 mp3; None tells the browser to use its own voice.
+def speak(req: SpeakRequest) -> Response:
+    # ElevenLabs speech as an mp3 the browser can play directly.
+    # 503 = no audio (ElevenLabs down, out of credits, no key): use the browser's own voice.
     text = req.text.strip()
     if not text:
-        return {"audio": None}
+        raise HTTPException(status_code=422, detail="nothing to say")
     try:
-        return {"audio": base64.b64encode(ai.speak(text[:500])).decode()}
+        return Response(content=ai.speak(text[:500]), media_type="audio/mpeg")
     except Exception as e:
         print(f"WARNING: ElevenLabs failed ({e!r})")
-        return {"audio": None}
+        raise HTTPException(status_code=503, detail="speech is unavailable")

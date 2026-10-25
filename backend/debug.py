@@ -364,7 +364,13 @@ def test_service(name: str) -> dict:
                 flash = sorted(m.name.removeprefix("models/") for m in client.models.list() if "flash" in m.name)
                 return done(ok=False, models=flash,
                             message="The key works. Now set GEMINI_MODEL to one of these models.")
-            resp = client.models.generate_content(model=model, contents="Reply with exactly: OxRide ready")
+            try:
+                resp = client.models.generate_content(model=model, contents="Reply with exactly: OxRide ready")
+            except Exception as e:
+                # most likely a wrong GEMINI_MODEL: show the names that would work
+                flash = sorted(m.name.removeprefix("models/") for m in client.models.list() if "flash" in m.name)
+                return done(ok=False, models=flash,
+                            message=f"GEMINI_MODEL={model!r} failed ({str(e)[:120]}). Use one of these names.")
             return done(ok=True, message=f"{model} replied: {resp.text.strip()[:100]}")
 
         if name == "elevenlabs":

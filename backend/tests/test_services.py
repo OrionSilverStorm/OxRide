@@ -51,3 +51,26 @@ def test_tests_are_rate_limited(client, monkeypatch):
     monkeypatch.setattr(debug, "_last_test", {"gemini": debug.time.time()})
     body = client.post("/debug/services/gemini/test").json()
     assert body["ok"] is False and "Wait" in body["message"]
+
+
+def test_wrong_gemini_model_lists_the_right_names(client, monkeypatch):
+    import types
+    from google import genai
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.models = types.SimpleNamespace(
+                generate_content=self.fail,
+                list=lambda: [types.SimpleNamespace(name="models/gemini-x-flash"),
+                              types.SimpleNamespace(name="models/gemini-x-pro")])
+
+        def fail(self, **kw):
+            raise RuntimeError("404 models/flash is not found")
+
+    monkeypatch.setattr(genai, "Client", FakeClient)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_MODEL", "models/flash")
+    body = client.post("/debug/services/gemini/test").json()
+    assert body["ok"] is False
+    assert body["models"] == ["gemini-x-flash"]
+    assert "models/flash" in body["message"]
