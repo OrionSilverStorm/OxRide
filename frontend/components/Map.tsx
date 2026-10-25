@@ -112,6 +112,7 @@ export default function Map() {
   const [profile, setProfile] = useState<Profile>("regular"); //defaults to regular
   //nav settings
   const [nav, setNav] = useState<NavigationData | null>(null); // Non-null = navigation mode
+  const [voiceOn, setVoiceOn] = useState(false); // Speaker mode, off by default (also acts as mute)
   //////////////////////////////////////////////////////////////////////////
 
   // Moves the target and removes the stale route line
@@ -272,6 +273,35 @@ export default function Map() {
     rec.start(); // Starts listening
   };
 
+  //************************************************************************************* */ ElevenLabs AI voice
+  // Speaks the current step and distance left whenever the step changes
+  useEffect(() => {
+    if (!voiceOn || !step) return; // Muted or not navigating: do nothing
+    let stale = false; // Set true if the step changes or the user mutes before audio arrives
+    let audio: HTMLAudioElement | undefined;
+
+    fetch("/api/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: `${step.instruction}. ${fmt(left)} remaining.`,
+      }), // What gets spoken
+    })
+      .then((r) => (r.ok ? r.blob() : Promise.reject())) // mp3 bytes
+      .then((b) => {
+        if (stale) return; // Don't play outdated audio
+        audio = new Audio(URL.createObjectURL(b));
+        audio.play();
+      })
+      .catch(() => {}); // Fail quietly
+
+    // Cleanup: runs on the next step, on mute, and on exit. Cuts the audio off immediately
+    return () => {
+      stale = true;
+      audio?.pause();
+    };
+  }, [voiceOn, i, nav]); // Re-run only when the step changes, not every GPS update
+
   return (
     <div className="h-full w-full">
       <MapContainer
@@ -323,15 +353,23 @@ export default function Map() {
                 {fmt(left)} · {eta}
               </p>
             </div>
-            <button
-              onClick={() => {
-                setNav(null);
-                setRoute(null);
-              }}
-              className="rounded-full bg-red-600 px-5 py-2 font-semibold"
-            >
-              Exit
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setVoiceOn((v) => !v)} // Click = user gesture, so the browser allows audio
+                className="rounded-full bg-neutral-700 px-4 py-2"
+              >
+                {voiceOn ? "🔊" : "🔇"}
+              </button>
+              <button
+                onClick={() => {
+                  setNav(null);
+                  setRoute(null);
+                }}
+                className="rounded-full bg-red-600 px-5 py-2 font-semibold"
+              >
+                Exit
+              </button>
+            </div>
           </div>
         </>
       )}
