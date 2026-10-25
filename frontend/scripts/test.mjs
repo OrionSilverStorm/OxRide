@@ -21,7 +21,8 @@ function run(label, cmd, args, cwd) {
 
 const results = [
   run("Backend tests", python, ["-m", "pytest", path.join("backend", "tests"), "-q"], root),
-  run("Frontend type check", "npx", ["tsc", "--noEmit"], path.join(root, "frontend")),
+  run("Frontend types", "npx", ["next", "typegen"], path.join(root, "frontend")) &&
+    run("Frontend type check", "npx", ["tsc", "--noEmit"], path.join(root, "frontend")),
 ];
 
 if (results.every(Boolean)) {
