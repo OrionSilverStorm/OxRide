@@ -181,18 +181,37 @@ export function departureHint(slots: Slot[], nowMs: number): string | null {
 
 export const DRAGON_MOODS = ["Sleepy", "Curious", "Grumpy", "Angry", "Furious"] as const;
 
-/** 0-100 from how much and how steeply the route climbs; mood 0 (sleepy) to 4 (furious). */
+/**
+ * 0-100 from how much and how steeply the route climbs; mood 0 (sleepy) to 4 (furious).
+ * Elevations are averaged over ±30 m and compared every ~50 m, not point by point: the
+ * elevation data has 1-2 m noise that would otherwise look like short steep climbs.
+ */
 export function sufferScore(route: LatLon[], elevations: number[]): { score: number; mood: number; climbM: number } {
+  const n = Math.min(route.length, elevations.length);
+  // average each elevation with its neighbours within 30 m to remove the noise
+  const cum = cumulativeM(route.slice(0, n));
+  const smooth: number[] = [];
+  for (let i = 0, lo = 0, hi = 0, sum = 0; i < n; i++) {
+    while (hi < n && cum[hi] - cum[i] <= 30) sum += elevations[hi++];
+    while (cum[i] - cum[lo] > 30) sum -= elevations[lo++];
+    smooth.push(sum / (hi - lo));
+  }
   let climb = 0;
   let steepClimb = 0;
-  for (let i = 1; i < route.length && i < elevations.length; i++) {
-    const rise = elevations[i] - elevations[i - 1];
-    if (rise <= 0) continue;
-    climb += rise;
-    const run = distanceM(route[i - 1], route[i]);
-    if (run > 0 && rise / run > 0.04) steepClimb += rise; // steeper than 4%
+  let from = 0; // start of the current ~50 m stretch
+  let run = 0;
+  for (let i = 1; i < n; i++) {
+    run += distanceM(route[i - 1], route[i]);
+    if (run < 50 && i < n - 1) continue;
+    const rise = smooth[i] - smooth[from];
+    if (rise > 0) {
+      climb += rise;
+      if (rise / run > 0.04) steepClimb += rise; // steeper than 4%
+    }
+    from = i;
+    run = 0;
   }
-  const score = Math.min(100, Math.round(climb * 0.8 + steepClimb * 2));
+  const score = Math.min(100, Math.round(climb * 0.7 + steepClimb * 1.5));
   const mood = score < 10 ? 0 : score < 25 ? 1 : score < 45 ? 2 : score < 70 ? 3 : 4;
   return { score, mood, climbM: Math.round(climb) };
 }

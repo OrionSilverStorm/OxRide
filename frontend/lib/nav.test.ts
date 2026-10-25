@@ -146,3 +146,16 @@ test("nextAt picks today or tomorrow", () => {
   const lateNight = new Date(2026, 9, 24, 23, 0);
   assert.equal(nextAt(22, lateNight), "2026-10-25T22:00");
 });
+
+test("elevation noise on a flat route doesn't anger the dragon", () => {
+  // 2 km flat with ±1.5 m jitter every 10 m (like the real elevation data)
+  const pts: LatLon[] = [];
+  const ele: number[] = [];
+  for (let i = 0; i <= 200; i++) {
+    pts.push(offsetPoint(A, 90, i * 10));
+    ele.push(60 + (i % 2 ? 1.5 : -1.5));
+  }
+  const s = sufferScore(pts, ele);
+  assert.ok(s.score < 10, `score ${s.score}`);
+  assert.equal(s.mood, 0);
+});
